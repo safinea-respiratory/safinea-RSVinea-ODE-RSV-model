@@ -1,0 +1,124 @@
+---
+# Ireland-specific RSV model configuration for the RespiCompass 2025/2026 round.
+# Covers RSV transmission in Ireland from Sep 2023 to Feb 2026 (n_days = 1000).
+#
+# All model parameters are initialised in default.yaml (fixed values or uncertainty
+# distributions). This file provides Ireland-specific overrides: calibration prior
+# bounds, data source settings, and vaccination parameters.
+#
+# Structure:
+# - Simulation settings: time horizon and transmission rate
+# - State durations and waning immunity
+# - Social mixing (Irish contact matrix)
+# - Calibration settings: prior bounds
+# - Calibration options: data source, country, fitting period
+
+# ---- Simulation settings ----
+
+# Number of days to simulate
+# This must be at least the sum of the burn-in period and the fitting dates
+n_days: 1000
+
+# Transmission rate at baseline susceptibility (defined as oldest age group) and seasonal maximum
+beta_A: 0.012 # transmission rate
+
+# Seasonality profile
+amplitude: 0.0 # 
+peak_day: 68.37 
+
+# ---- State durations ----
+# Days from exposure to symptom onset for strain A 
+gamma_A: 
+  uncertainty:
+    fn: "norm"  # Options: unif (min, max), norm (mean, sd), pois (lambda)
+    mean: 7
+    sd: 2
+
+# ---- Mortality rate ----
+p_death: 0.0 # Proportion of hospitalisations resulting in death
+
+# ---- Rates of waning immunity ----
+omega_1: 230  # Days to become susceptible again following first infection
+omega_2: 260  # Days to become susceptible again following second infection
+omega_3: 290  # Days to become susceptible again following third infection
+omega_4: 400  # Days to become susceptible again following later infections
+
+# ---- Social mixing ----
+# Countries to pull contact matrix data from
+contact_matrix_countries: IRL  # ISO 3166-1 alpha-3 country codes (en.wikipedia.org/wiki/ISO_3166-1_alpha-3)
+
+# ---- Calibration settings ----
+calibration_parameters:
+- param: "seasonality_exponent"
+  lower: 0.5
+  upper: 2.0
+- param: "season2_effect"
+  lower: 0.7
+  upper: 1.1
+- param: "season3_effect"
+  lower: 0.7
+  upper: 1.1
+- param: "vaccination_catch_up_coverage"
+  lower: 0.3
+  upper: 0.7
+- param: "rel_hosp_a_A"
+  lower: 90
+  upper: 120
+- param: "rel_hosp_b_A"
+  lower: 20
+  upper: 30
+- param: "rel_hosp_c_A"
+  lower: 5
+  upper: 12
+- param: "beta_A"
+  lower: 0.060
+  upper: 0.099
+- param: "p_hosp_A"
+  lower: 0.000120
+  upper: 0.000190
+- param: "init_inf"
+  lower: 0.05
+  upper: 0.15
+- param: "omega_1"
+  lower: 100
+  upper: 140
+- param: "omega_2"
+  lower: 120
+  upper: 160
+- param: "omega_3"
+  lower: 130
+  upper: 180
+- param: "omega_4"
+  lower: 140
+  upper: 200
+- param: "peak_day"
+  lower: 110
+  upper: 130
+- param: "amplitude"
+  lower: 0.15
+  upper: 0.35 
+
+# Additional options for calibration
+calibration_options:
+ data_source:
+    epi: "RESPICOMPASS"      # OPTIONS: 'RESPICOMPASS', 'USER-DEFINED'
+ country: "IE"         # N.B. Cross-reference with contact matrix above
+ data_end: 2026-01-25  # Last day in data
+ data_days: 880        # Length of data for fitting
+ data_burn_in: 0       # Number of days to simulate before matching to data
+ cases: "observed"     # data stream label
+ hospital_admissions: "observed" # data stream label
+ deaths: "observed"    # data stream label
+  
+# Time period for calibration
+calibration_time_period: "day" # OPTIONS: "day", "week", "month", "quarter", "year"
+
+# Weights for calibration (set metrics to 0 to turn off)
+calibration_weights:
+ metrics:
+  cases: 0.0
+  hospital_admissions: 1.0
+  hospital_burden: 1.0
+  hospital_beds: 0.0
+  deaths: 0.0
+  
