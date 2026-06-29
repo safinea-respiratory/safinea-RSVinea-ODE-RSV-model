@@ -1,5 +1,8 @@
 # RSVinea — ODE Model of RSV Transmission and Disease
 
+> **Work in progress — adult vaccination branch**
+> This branch is under active development and extends the model to incorporate adult vaccination. The code, parameters, and results here are **not yet validated** and should not be used for policy or clinical decisions. Please refer to the `main` branch for the current stable release.
+
 RSVinea is an age-structured, compartmental ordinary differential equation (ODE) model for simulating Respiratory Syncytial Virus (RSV) transmission and disease burden. It was developed as part of the [RespiCompass](https://github.com/european-modelling-hubs/RespiCompass) European respiratory virus modelling hub. The model is country-agnostic — each analysis is driven by a per-country configuration file — and ships with a worked example (`IE`).
 
 ---
