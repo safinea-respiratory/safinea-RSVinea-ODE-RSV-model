@@ -35,21 +35,8 @@ country_list = read.csv("https://raw.githubusercontent.com/european-modelling-hu
 pop_df = read.csv("https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/population/population_estimates.csv")
 burden_df = read.csv("data/epidemiological/RSV_monthly_prop_age.csv")
 
-# Age group mapping - in correct order (35 groups, matching default.yaml age_groups)
-age_levels = data.frame( age_group = c("0-1m", "1-2m", "2-3m", "3-4m", "4-5m", "5-6m",
-                                       "6-7m", "7-8m", "8-9m", "9-10m", "10-11m", "11-12m",
-                                       "12-13m", "13-14m", "14-15m", "15-16m", "16-17m", "17-18m",
-                                       "18-19m", "19-20m", "20-21m", "21-22m", "22-23m", "23-24m",
-                                       "24-30m", "30-36m", "3-4y", "4-5y", "5-18y",
-                                       "18-59y", "60-64y",
-                                       "65-69y", "70-74y", "75-79y", "80+y"))
-age_group_map = age_levels %>%
-  mutate(age_group_respiCompass = c("0-3m", "0-3m", "0-3m",
-                                    "3-6m", "3-6m", "3-6m",
-                                    "6-12m", "6-12m", "6-12m", "6-12m", "6-12m", "6-12m",
-                                    "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y", "1-5y",
-                                    "5-18y", "18-59y", "60-64y",
-                                    "65-69y", "70-74y", "75-79y", "80+y"))
+# Age group mapping — read from default.yaml (single source of truth)
+age_group_map = age_group_map_df(o)
 
 # Define metrics to show
 metric_levels = c("hospital_admissions", "cases")

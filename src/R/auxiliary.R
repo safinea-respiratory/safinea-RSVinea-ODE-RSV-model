@@ -19,8 +19,27 @@ remap_age_groups = function(df, mapping, col = "age_group") {
 # fine-to-reporting mapping is never hard-coded per script.
 # Returns a named character vector (names = fine groups, values = bands).
 # -------------------------------------------------------- -
+# Returns named character vector: fine group → reporting band
 age_band_lookup = function(o) {
   unlist(yaml::read_yaml(o$pth$params_default)$age_group_map)
+}
+
+# Returns ordered character vector of all fine model age groups (from age_groups in YAML)
+age_group_levels = function(o) {
+  unlist(yaml::read_yaml(o$pth$params_default)$age_groups)
+}
+
+# Returns ordered character vector of unique RespiCompass reporting bands (from age_group_map in YAML)
+respicompass_band_order = function(o) {
+  unique(unlist(yaml::read_yaml(o$pth$params_default)$age_group_map))
+}
+
+# Returns data frame mapping fine age groups to RespiCompass reporting bands (for left_join)
+age_group_map_df = function(o) {
+  lkp <- age_band_lookup(o)
+  data.frame(age_group            = names(lkp),
+             age_group_respiCompass = unname(lkp),
+             stringsAsFactors = FALSE)
 }
 
 # -------------------------------------------------------- -
