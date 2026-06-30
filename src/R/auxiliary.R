@@ -317,7 +317,10 @@ reband_contact_matrix <- function(mat, original_breaks, target_breaks, pop = NUL
 
 # 
 parse_age_range <- function(label) {
-  if (label == "65+y") return(c(65, 100))
+  if (str_detect(label, "\\+y$")) {
+    lower <- as.numeric(str_remove(label, "\\+y$"))
+    return(c(lower, 100))
+  }
   
   parts <- str_split(label, "-")[[1]]
   # Determine the unit from the second part

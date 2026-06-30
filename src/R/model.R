@@ -41,8 +41,12 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   
   
   # Change age bands
+  # Prem et al. contact matrices cover age groups 0-4y through 75-79y (16 bins,
+  # breaks 0,5,...,75). We extend the last break to 100y so that the 80+y model
+  # age group inherits the 75-79y contact rates (standard assumption for ages
+  # beyond the Prem data range).
   p$contact_matrix <- reband_contact_matrix(mat = p$contact_matrix,
-                                            original_breaks = seq(0, 80, 5),
+                                            original_breaks = c(seq(0, 75, 5), 100),
                                             target_breaks = p$age_breaks)
   row.names(p$contact_matrix) = p$age_groups
   colnames(p$contact_matrix) = p$age_groups
