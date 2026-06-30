@@ -445,110 +445,134 @@ rsv_model = function(t, y, p){
 # ---------------------------------------------------------
 # Monthly ageing event
 # ---------------------------------------------------------
-# Fired by deSolve on the first day of each month. For every compartment we
-# move a fraction `1/width_months` of the bin into the next-older bin, so an
-# n-month-wide bin empties on a roughly n-month timescale. The oldest bin
-# (e.g. "65+y") has infinite width and never empties.
+# Fired by deSolve on the first day of each month. Three things happen:
 #
-# On the same event, the youngest bin ("0-1m") is refilled by that month's
-# births. Newborns are split between S0 (unvaccinated) and V0 (vaccinated
-# via maternal immunisation / mAbs) according to the current `vacc_coverage`,
-# which is only non-zero during the configured `vaccination_start`/`end`
-# windows.
+# 1. DEMOGRAPHIC AGEING: for every compartment we move a fraction
+#    `1/width_months` of each age bin into the next-older bin, so an
+#    n-month-wide bin empties on a roughly n-month timescale. The oldest
+#    bin (e.g. "80+y") has infinite width and never empties.
 #
-# A one-shot catch-up cohort is applied on `vaccination_catch_up_date`:
-# `vaccination_catch_up_coverage` of S0 in the listed age groups is moved
-# into V0.
+# 2. ADULT V-STAGE WANING: the adult vaccination waning chain is advanced
+#    one step. Individuals in V_k_j move to V_k_{j+1} (j = 1..W-1);
+#    those in V_k_W (fully waned) return to S_k and become eligible for
+#    re-vaccination. This is done after demographic ageing so age-group
+#    movement and stage advancement are independent.
 #
-# Note: the death (D*) compartments are not age-shifted here, so cumulative
-# deaths retain the age group at time of death (i.e. deaths-by-age-at-death).
-# Mortality is currently disabled in the configs (p_death = 0), so D* stays at
-# zero; revisit this if age-at-observation death tracking is ever needed.
+# 3. VACCINATION:
+#    a. Infant routine: newborns (0-1m) are split between S0 and V0
+#       according to infant_vacc_coverage, which is non-zero only during
+#       the configured infant_vaccination_start/end windows.
+#    b. Infant catch-up: on infant_vaccination_catch_up_date, a fraction
+#       infant_vaccination_catch_up_coverage of S0 in the listed age groups
+#       is moved into V0.
+#    c. Adult campaign: on each adult_vaccination_dates, a fraction
+#       adult_vacc_coverage of S1/S2/S3 in adult_vaccination_agegroups
+#       is moved into V1_1/V2_1/V3_1 (entering the waning chain at stage 1).
+#
+# Note: D* compartments are not age-shifted, so cumulative deaths retain
+# the age group at time of death. Mortality is currently disabled in the
+# configs (p_death = 0); revisit if age-at-observation tracking is needed.
 ageing_event <- function(t, y, parms) {
-  
+
   # Extract names and split into prefix and age group
   comp_names <- names(y)
-  parts <- str_match(comp_names, "^(.*)_(.+)$")
-  prefixes <- parts[,2]
-  age_labels <- parts[,3]
-  
+  parts      <- str_match(comp_names, "^(.*)_(.+)$")
+  prefixes   <- parts[, 2]
+  age_labels <- parts[, 3]
+
   widths <- sapply(age_labels, bin_width_months)
-  new_y <- y  # copy to modify
-  
+  new_y  <- y  # copy to modify
+
   # Current event date (origin is parms$start_date)
   current_date <- parms$start_date + round(t)
-  if(day(current_date) != 1){
-    return(y)
-  }
-  
-  # Define vaccination coverage
-  if (any(current_date >= ymd(parms$vaccination_start) & current_date <= ymd(parms$vaccination_end))){
-    vacc_coverage = parms$vacc_coverage
+  if (day(current_date) != 1) return(y)
+
+  # ---- 1. Demographic ageing (all compartments) ----
+  # Infant vaccination coverage for this month (non-zero only in season window)
+  if (any(current_date >= ymd(parms$infant_vaccination_start) &
+          current_date <= ymd(parms$infant_vaccination_end))) {
+    infant_vacc_coverage <- parms$infant_vacc_coverage
   } else {
-    vacc_coverage = 0 # If we are outside of vaccination period, no vaccination occurs
+    infant_vacc_coverage <- 0
   }
-  
-  # Find births for this month
+
+  # Monthly births
   births_val <- with(parms$births, {
     idx <- match(current_date, date)
     if (!is.na(idx)) births[idx] else 0
   })
-  
-  
-  # Process each prefix/state separately
+
   for (pref in unique(prefixes)) {
-    
+
     idx <- which(prefixes == pref)
-    
-    # Shift from younger to older bins
+
+    # Shift individuals from younger to older age bins
     for (k in seq_along(idx)) {
       i <- idx[k]
-      if (k == length(idx)) next  # skip last bin
-      
-      w <- widths[i]
-      if (is.finite(w)) {
-        frac = 1/w 
-      } else {
-        frac = 0
-      }
-      
-      move <- y[i] * frac
-      new_y[i] <- new_y[i] - move
-      new_y[idx[k+1]] <- new_y[idx[k+1]] + move
+      if (k == length(idx)) next  # last bin never empties (infinite width)
+      w    <- widths[i]
+      frac <- if (is.finite(w)) 1/w else 0
+      move        <- y[i] * frac
+      new_y[i]         <- new_y[i]         - move
+      new_y[idx[k+1]]  <- new_y[idx[k+1]] + move
     }
-    
-    # Handle the 0-1m bin
+
+    # Replenish / zero the 0-1m bin
     first_label <- age_labels[idx[1]]
     if (first_label == "0-1m") {
       first_bin <- idx[1]
       if (pref == "S0") {
-        # S0_0-1m gets replenished with births: all those that are not vaccinated
-        new_y[first_bin] <- births_val * (1-vacc_coverage)
+        new_y[first_bin] <- births_val * (1 - infant_vacc_coverage)
       } else if (pref == "V0") {
-        # V0_0-1m gets replenished with births: vaccinated ones
-        new_y[first_bin] <- births_val * vacc_coverage
+        new_y[first_bin] <- births_val * infant_vacc_coverage
       } else {
-        # All other prefixes: newborn bin emptied
         new_y[first_bin] <- 0
       }
     }
-    
   }
-  
-  # Handle the catch up cohort
-  if (current_date == parms$vaccination_catch_up_date){
-    # Store an identical twin
-    new_y2 = new_y
-    
-    # Identify relevant age groups with the given prefix/state
-    ind_S0 = which(age_labels %in% parms$vaccination_catch_up_agegroup & prefixes == "S0")
-    ind_V0 = which(age_labels %in% parms$vaccination_catch_up_agegroup & prefixes == "V0")
-    
-    # S0_x gets smaller due to vaccination: what remains are all those that are not vaccinated
-    new_y[ind_S0] <- new_y2[ind_S0] * (1-parms$vaccination_catch_up_coverage)
-    # V0_x gets larger due to vaccination: vaccinated ones
-    new_y[ind_V0] <- new_y[ind_V0] + new_y2[ind_S0] * parms$vaccination_catch_up_coverage
-    
+
+  # ---- 2. Adult V-stage waning advancement ----
+  # Advance each tier's waning chain by one month.
+  # Process stages from last to first to avoid overwriting values mid-loop.
+  for (k in 1:3) {
+    idx_Sk <- which(prefixes == paste0("S", k))
+
+    for (j in parms$W:1) {
+      idx_j <- which(prefixes == paste0("V", k, "_", j))
+      if (j == parms$W) {
+        # Last stage: waned individuals return to susceptible pool
+        new_y[idx_Sk] <- new_y[idx_Sk] + new_y[idx_j]
+      } else {
+        # All other stages: advance to next stage
+        idx_j1        <- which(prefixes == paste0("V", k, "_", j + 1))
+        new_y[idx_j1] <- new_y[idx_j1] + new_y[idx_j]
+      }
+      new_y[idx_j] <- 0
+    }
+  }
+
+  # ---- 3a. Infant catch-up campaign ----
+  if (current_date == ymd(parms$infant_vaccination_catch_up_date)) {
+    new_y2  <- new_y
+    ind_S0  <- which(age_labels %in% parms$infant_vaccination_catch_up_agegroup & prefixes == "S0")
+    ind_V0  <- which(age_labels %in% parms$infant_vaccination_catch_up_agegroup & prefixes == "V0")
+    new_y[ind_S0] <- new_y2[ind_S0] * (1 - parms$infant_vaccination_catch_up_coverage)
+    new_y[ind_V0] <- new_y[ind_V0]  + new_y2[ind_S0] * parms$infant_vaccination_catch_up_coverage
+  }
+
+  # ---- 3b. Adult vaccination campaign ----
+  # On each campaign date, move adult_vacc_coverage fraction of S1/S2/S3
+  # in the eligible age groups into V1_1/V2_1/V3_1 (waning chain stage 1).
+  if (any(current_date == ymd(parms$adult_vaccination_dates))) {
+    for (k in 1:3) {
+      idx_Sk  <- which(prefixes == paste0("S", k) &
+                       age_labels %in% parms$adult_vaccination_agegroups)
+      idx_Vk1 <- which(prefixes == paste0("V", k, "_1") &
+                       age_labels %in% parms$adult_vaccination_agegroups)
+      to_vacc          <- new_y[idx_Sk] * parms$adult_vacc_coverage
+      new_y[idx_Sk]    <- new_y[idx_Sk]  - to_vacc
+      new_y[idx_Vk1]   <- new_y[idx_Vk1] + to_vacc
+    }
   }
 
   return(new_y)
