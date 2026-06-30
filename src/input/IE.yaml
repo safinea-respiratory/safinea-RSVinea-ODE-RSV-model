@@ -47,6 +47,9 @@ omega_4: 400  # Days to become susceptible again following later infections
 # Countries to pull contact matrix data from
 contact_matrix_countries: IRL  # ISO 3166-1 alpha-3 country codes (en.wikipedia.org/wiki/ISO_3166-1_alpha-3)
 
+# ---- Adult vaccination ----
+adult_vacc_coverage: 0.5
+
 # ---- Calibration settings ----
 calibration_parameters:
 - param: "seasonality_exponent"

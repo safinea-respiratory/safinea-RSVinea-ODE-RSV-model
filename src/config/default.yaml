@@ -189,8 +189,9 @@ rel_death_a: 0.0 # First (youngest) age group relative to oldest age group
 rel_death_b: 0.0 # Second age group relative to oldest age group
 rel_death_c: 0.0 # Third age group relative to oldest age group
 
-# ---- Vaccine efficacy ----
-vaccine_rel_protection: [ # relative vaccination protection by age group
+# ---- Infant vaccine efficacy ----
+# 1 means no protection, 0 is full protection
+infant_vaccine_rel_protection: [ # relative vaccination protection by age group
   0.997, 0.974, 0.911, # 0-3m
   0.821, 0.720, 0.621, # 3-6m
   0.522, 0.430, 0.347, 0.279, 0.221, 0.172, # 6-12m by 1 month
@@ -198,14 +199,40 @@ vaccine_rel_protection: [ # relative vaccination protection by age group
   0, 0, # 24-36m by 6 months
   0, 0, # 3-5y by 1 year
   0, 0, 0, 0, 0, 0, 0, # 5-18y, 18-59y, 60-64y, 65-69y, 70-74y, 75-79y, 80+y
-] # 1 means no protection, 0 is full protection, values RespiCompass, taking mean of all curves https://github.com/european-modelling-hubs/RespiCompass/blob/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/waning/waning_curves.csv 
-# Vaccination period
-vaccination_start: ["2024-09-01", "2025-09-01"]
-vaccination_end: ["2025-02-28", "2026-02-28"]
-# Catch up period (e.g., infants born outside of the RSV season)
-vaccination_catch_up_date: "2025-09-01"
-vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m" ]
-vaccination_catch_up_coverage: 0.40
+] # Values from RespiCompass mean waning curves https://github.com/european-modelling-hubs/RespiCompass/blob/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/waning/waning_curves.csv
+infant_vacc_IE: 0.87      # VE against acquisition for infants; values from RespiCompass
+infant_vacc_IE_hosp: 0.80 # Overall VE against hospitalisation for infants (unconditional; model derives conditional internally)
+infant_vacc_coverage: 0.83
+
+# ---- Adult vaccine efficacy ----
+# PLACEHOLDER FIXME - replace with trial-derived estimates when available
+# 1 means no protection, 0 is full protection; indexed by months since vaccination
+adult_vaccine_rel_protection: [
+  0.150, 0.174, 0.199, 0.223, 0.247, 0.271, # months 1-6
+  0.296, 0.320, 0.344, 0.369, 0.393, 0.417, # months 7-12
+  0.441, 0.466, 0.490, 0.514, 0.539, 0.563, # months 13-18
+  0.587, 0.611, 0.636, 0.660, 0.684, 0.709, # months 19-24
+  0.733, 0.757, 0.781, 0.806, 0.830, 0.854, # months 25-30
+  0.879, 0.903, 0.927, 0.951, 0.976, 1.000  # months 31-36
+]
+adult_vacc_IE: 0.80      # VE against acquisition for adults (PLACEHOLDER FIXME)
+adult_vacc_IE_hosp: 0.77 # Overall VE against hospitalisation for adults (unconditional; model derives conditional internally) (PLACEHOLDER FIXME)
+adult_vacc_coverage: 0.0 # Set per country (e.g. IE.yaml); default 0 means no adult vaccination
+adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
+W: 36 # Waning chain length in months (duration of adult vaccine protection)
+
+# ---- Infant vaccination schedule ----
+# Infants born within this window are vaccinated at birth
+infant_vaccination_start: ["2024-09-01", "2025-09-01"]
+infant_vaccination_end: ["2025-02-28", "2026-02-28"]
+# One-time catch-up campaign for infants born outside the RSV season
+infant_vaccination_catch_up_date: "2025-09-01"
+infant_vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m"]
+infant_vaccination_catch_up_coverage: 0.40
+
+# ---- Adult vaccination schedule ----
+# Single annual campaign date(s); eligible adults are vaccinated on this date each year
+adult_vaccination_dates: ["2024-10-01", "2025-10-01"]
 
 # 
 #season_effect: [1.03, 1.0, 0.95]
@@ -282,13 +309,6 @@ adaptive_sampling:
   rounds: 5        # Number of rounds (set to 0 to turn adaptive sampling off)
   init_samples: 300  # Number of parameter sets per round
 
-vacc_coverage: 0.83 # vaccination coverage
-vacc_IE: # Immunisation effectiveness, given by respicompass
-    uncertainty:
-      fn: "norm"  # Options: unif (min, max), norm (mean, sd), pois (lambda)
-      mean: 0.87 # values from RespiCompass
-      sd: 0.026
-
 # ---- Scenarios ----
 # N.B. A baseline scenario is run automatically
 scenarios:
@@ -296,12 +316,15 @@ scenarios:
   name: "Baseline scenario"
 - id: no_vacc
   name: "No vaccination scenario"
-  vacc_coverage: 0.0
-  vacc_IE: 0.0
-  vaccination_catch_up_coverage: 0.0
-- id: high_vacc   
+  infant_vacc_coverage: 0.0
+  infant_vacc_IE: 0.0
+  infant_vaccination_catch_up_coverage: 0.0
+  adult_vacc_coverage: 0.0
+  adult_vacc_IE: 0.0
+- id: high_vacc
   name: "High vaccination scenario"
-  vacc_coverage: 0.95
-  vaccination_catch_up_coverage: 0.80
+  infant_vacc_coverage: 0.95
+  infant_vaccination_catch_up_coverage: 0.80
+  adult_vacc_coverage: 0.80
 
 
