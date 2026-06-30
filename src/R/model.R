@@ -750,8 +750,8 @@ format_output = function(out_df, p) {
   
   
   #---- Latent (pre-infectious) ----
-  # Select latent (pre-infectious) columns
-  E_A_cols = c(outer(c("E0_", "E1_", "E2_", "E3_"), p$age_groups, paste0)) %>%
+  # Select latent (pre-infectious) columns — includes vaccinated exposed streams (E_kv)
+  E_A_cols = c(outer(c("E0_", "E0v_", "E1_", "E1v_", "E2_", "E2v_", "E3_", "E3v_"), p$age_groups, paste0)) %>%
     as.vector()
   
   # Summarise latent (pre-infectious) by age group and time
@@ -767,8 +767,8 @@ format_output = function(out_df, p) {
            variant = "A") 
   
   #---- Infectious ----
-  # Select infectious columns 
-  I_A_cols = c(outer(c("I0_", "I1_", "I2_", "I3_"), p$age_groups, paste0)) %>%
+  # Select infectious columns — includes vaccinated infectious streams (I_kv)
+  I_A_cols = c(outer(c("I0_", "I0v_", "I1_", "I1v_", "I2_", "I2v_", "I3_", "I3v_"), p$age_groups, paste0)) %>%
     as.vector()
   
   # Summarise infectious by age group and time
@@ -854,9 +854,13 @@ format_output = function(out_df, p) {
            variant = NA_character_) # Deceased compartment not disaggregated by variant
   
   #---- Vaccinated ----
-  # Select vaccinated columns (cumulative vaccinations)
-  V_cols = c(outer(c("V0_"), p$age_groups, paste0)) %>%
-    as.vector()
+  # Select vaccinated columns: infant stream (V0) + all adult waning stages (V1_j, V2_j, V3_j)
+  V_cols = c(
+    outer("V0_", p$age_groups, paste0),
+    outer(paste0("V1_", seq_len(p$W), "_"), p$age_groups, paste0),
+    outer(paste0("V2_", seq_len(p$W), "_"), p$age_groups, paste0),
+    outer(paste0("V3_", seq_len(p$W), "_"), p$age_groups, paste0)
+  ) %>% as.vector()
   
   V_df = out_df %>% pivot_longer(cols = all_of(V_cols),
                                  names_to = "compartment",
@@ -914,7 +918,7 @@ format_output = function(out_df, p) {
   
   #---- Total living population ----
   # Define the subset of metrics to be summed
-  pop_metrics = c("susceptibles", "latent", "infectious", "hospital_occupancy", "recovered")  
+  pop_metrics = c("susceptibles", "latent", "infectious", "hospital_occupancy", "recovered", "vaccinated")  
   
   # Compute 'total' as the sum of the selected metrics within each age group
   pop_total = m %>%
