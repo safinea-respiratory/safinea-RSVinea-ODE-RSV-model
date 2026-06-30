@@ -10,11 +10,12 @@
 age_groups: ["0-1m", "1-2m", "2-3m", "3-4m", "4-5m", "5-6m", "6-7m", "7-8m", "8-9m", "9-10m",
              "10-11m", "11-12m", "12-13m", "13-14m", "14-15m", "15-16m", "16-17m", "17-18m",
              "18-19m", "19-20m", "20-21m", "21-22m", "22-23m", "23-24m",
-             "24-30m", "30-36m", "3-4y", "4-5y", "5-18y", "18-65y", "65+y"]
+             "24-30m", "30-36m", "3-4y", "4-5y", "5-18y", "18-59y",
+             "60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
 
 # Age group breakpoints in months (divide by 12 for years); must have one more entry than age_groups
 age_breaks_months: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-                    21, 22, 23, 24, 30, 36, 48, 60, 216, 780, 1200]
+                    21, 22, 23, 24, 30, 36, 48, 60, 216, 720, 780, 840, 900, 960, 1200]
 
 # Label mapping from RespiCompass population data source to RSVinea reporting bands
 respicompass_age_map:
@@ -55,9 +56,13 @@ age_group_map:
   "30-36m": "1-5y"
   "3-4y":   "1-5y"
   "4-5y":   "1-5y"
-  "5-18y":  "5-65y"
-  "18-65y": "5-65y"
-  "65+y":   "65+y"
+  "5-18y":  "5-18y"
+  "18-59y": "18-59y"
+  "60-64y": "60-64y"
+  "65-69y": "65-69y"
+  "70-74y": "70-74y"
+  "75-79y": "75-79y"
+  "80+y":   "80+y"
 
 # ---- Simulation settings ----
 
@@ -192,7 +197,7 @@ vaccine_rel_protection: [ # relative vaccination protection by age group
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, # 12-24m by 1 month
   0, 0, # 24-36m by 6 months
   0, 0, # 3-5y by 1 year
-  0, 0, 0, # 5-18y, 18-65y, 65+y
+  0, 0, 0, 0, 0, 0, 0, # 5-18y, 18-59y, 60-64y, 65-69y, 70-74y, 75-79y, 80+y
 ] # 1 means no protection, 0 is full protection, values RespiCompass, taking mean of all curves https://github.com/european-modelling-hubs/RespiCompass/blob/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/waning/waning_curves.csv 
 # Vaccination period
 vaccination_start: ["2024-09-01", "2025-09-01"]
