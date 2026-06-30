@@ -61,7 +61,7 @@ calibration_parameters:
 - param: "season3_effect"
   lower: 0.7
   upper: 1.1
-- param: "vaccination_catch_up_coverage"
+- param: "infant_vaccination_catch_up_coverage"
   lower: 0.3
   upper: 0.7
 - param: "rel_hosp_a_A"

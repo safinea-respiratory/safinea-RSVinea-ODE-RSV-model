@@ -961,7 +961,7 @@ age_relativity = function(p){
     # Read in relative susceptibility by age group 
     mutate(susceptibility = case_when(larger_group %in% c("0-1m", "1-2m", "2-3m") ~ p$rel_sus_a,
                                       larger_group %in% c("3-4m", "4-5m", "5-6m") ~ p$rel_sus_b,
-                                      larger_group %in% c("65+y") ~ p$rel_sus_c,
+                                      larger_group %in% c("60-64y", "65-69y", "70-74y", "75-79y", "80+y") ~ p$rel_sus_c,
                                       TRUE ~ susceptibility)) %>%
     # Map susceptibility to smaller age groups
     right_join(p$age_group_map, by = "larger_group") %>%
