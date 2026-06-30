@@ -606,13 +606,18 @@ bin_width_months <- function(age_label) {
 #   E{tier}_g = prop_E * N_g
 #   I{tier}_g = init_inf * prop_I_unit * N_g
 #   R{tier}_g = N_g - (S + E + I)        # remainder goes to recovered
-#   all other compartments (including V0, S2/E2/I2/R2, D*) = 0
+#   all other compartments = 0
 #
 # Notes:
 #   - Tier 2 (S2/E2/I2/R2) is intentionally not seeded; it fills dynamically
 #     via flow R1 -> S2 during simulation.
 #   - V0 is not seeded; newborns enter V0 via the monthly ageing event when
-#     vaccination is active.
+#     infant vaccination is active.
+#   - V1_j/V2_j/V3_j (adult waning chain) all start at zero; they are filled
+#     by the adult campaign logic in ageing_event on adult_vaccination_dates.
+#   - E0v/I0v and E1v-E3v/I1v-I3v (vaccinated exposed/infectious streams)
+#     start at zero and fill via ODE infection flows once V compartments are
+#     populated.
 # ---------------------------------------------------------
 initiate_epidemic = function(p, verbose){
 
