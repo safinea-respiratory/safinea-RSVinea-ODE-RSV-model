@@ -89,26 +89,40 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   if (verbose != "none") message(" - Running model")
   
   # List of compartments.
-  # Naming convention: <state><tier>, where state is one of
-  #   V = vaccinated and not yet infected (waning vaccine immunity)
-  #   S = susceptible
-  #   E = latent (exposed, pre-infectious)
-  #   I = infectious
-  #   H = hospitalised
-  #   R = recovered (temporary immunity, wanes to next susceptible tier)
-  #   D = dead (cumulative, absorbing)
-  # and tier is the number of PRIOR infections:
-  #   0 = naive, 1 = one prior, 2 = two priors, 3 = three or more priors.
-  # V is only modelled for the naive tier (V0); after first infection the
-  # vaccinated and unvaccinated streams merge (see dE0, where both S0 and V0
-  # flow into E0).
-  p$compartments = c("V0",
-                     "S0", "S1", "S2", "S3",
-                     "E0", "E1", "E2", "E3",
-                     "I0", "I1", "I2", "I3",
-                     "H0", "H1", "H2", "H3",
-                     "R0", "R1", "R2", "R3",
-                     "D0", "D1", "D2", "D3")
+  # Naming convention: <state><tier>[_stage], where state is one of
+  #   V  = vaccinated, not yet infected (waning vaccine immunity)
+  #   S  = susceptible
+  #   E  = latent (exposed, pre-infectious)
+  #   Ev = latent, came from vaccinated stream (for VE-against-severity tracking)
+  #   I  = infectious
+  #   Iv = infectious, came from vaccinated stream
+  #   H  = hospitalised
+  #   R  = recovered (temporary immunity, wanes to next susceptible tier)
+  #   D  = dead (cumulative, absorbing)
+  # Tier = number of PRIOR infections: 0 = naive, 1 = one prior, 2 = two, 3 = three+.
+  #
+  # Infant vaccination (V0): single compartment; waning encoded via age-group
+  #   position in infant_vaccine_rel_protection (age ≈ time since vaccination).
+  #
+  # Adult vaccination (V1_j, V2_j, V3_j): staged waning chain of length W.
+  #   Each month the ageing event advances individuals one step (V_k_j → V_k_{j+1}).
+  #   At stage W individuals return to S_k (fully waned). Adult protection at
+  #   stage j is given by adult_vaccine_rel_protection[j].
+  #
+  # E0v / I0v track infants infected while in V0 (for infant VE-against-severity).
+  # E1v–E3v / I1v–I3v track adults infected while in any V_k stage (same purpose).
+  p$compartments = c(
+    "V0",
+    paste0("V1_", seq_len(p$W)),   # adult waning chain, tier 1
+    paste0("V2_", seq_len(p$W)),   # adult waning chain, tier 2
+    paste0("V3_", seq_len(p$W)),   # adult waning chain, tier 3
+    "S0", "S1", "S2", "S3",
+    "E0", "E0v", "E1", "E1v", "E2", "E2v", "E3", "E3v",
+    "I0", "I0v", "I1", "I1v", "I2", "I2v", "I3", "I3v",
+    "H0", "H1", "H2", "H3",
+    "R0", "R1", "R2", "R3",
+    "D0", "D1", "D2", "D3"
+  )
   
   # Seed the initial infection
   states = initiate_epidemic(p, verbose)
@@ -215,13 +229,19 @@ rsv_model = function(t, y, p){
   
   # Assert non-negativity (which may be caused by numerical errors in solver)
   states = pmax(y, 0)
-  
+
   extract_states = p$compartments
-  
-  # # Extract epidemiological state variables by age using the helper function
+
   states  <- as.data.frame(matrix(states,nrow=p$n_age,ncol=length(extract_states),byrow=FALSE))
   names(states) <- extract_states
-  
+
+  # Pre-extract adult V-stage matrices (n_age × W) before entering 'with'.
+  # These are accessible inside 'with' via the parent environment.
+  # Element [a, j] = number of individuals in age group a at waning stage j.
+  V1_mat <- as.matrix(states[, paste0("V1_", seq_len(p$W)), drop=FALSE])
+  V2_mat <- as.matrix(states[, paste0("V2_", seq_len(p$W)), drop=FALSE])
+  V3_mat <- as.matrix(states[, paste0("V3_", seq_len(p$W)), drop=FALSE])
+
   with(states, {
     
     # Seasonality: cosine wave with peak at `peak_day` (day of year),
@@ -230,35 +250,62 @@ rsv_model = function(t, y, p){
     cval <- cos(2 * pi * (t - p$peak_day) / 365)
     seasonality_factor <- 1 + p$amplitude * sign(cval) * abs(cval)^p$seasonality_exponent
 
-    # Effective infectious population (per age group), weighted by
-    # tier-dependent infectiousness. Repeat infections shed less virus.
-    infectious_A = p$first_infection_infectiousness  * I0 +
-                   p$second_infection_infectiousness * I1 +
-                   p$third_infection_infectiousness  * I2 +
-                   p$third_infection_infectiousness  * I3
-
     # Which RSV season are we in (1 = season containing start_date)?
-    # Used to apply year-to-year scalars on beta.
     season_nr = get_season_number(p$start_date + t - 1, p$start_date)
 
-    # Per-season scalar on transmission rate. Seasons beyond the configured
-    # ones fall back to 1.0 so beta stays defined for long simulations.
+    # Per-season scalar on transmission rate.
     season_effect = c(1, p$season2_effect, p$season3_effect)
     season_scalar = if (season_nr >= 1 && season_nr <= length(season_effect))
                       season_effect[season_nr] else 1
 
-    # Force of infection (strain A): per-contact transmission probability,
-    # scaled by seasonality and behavioural change, weighted by the
-    # prevalence of infectiousness per contact, then mixed through the
-    # contact matrix to give the per-susceptible hazard by age group.
+    # ---- Force of infection ----
+    # Effective infectious population: vaccinated streams (I_kv) contribute equally
+    # to unvaccinated streams — vaccination does not reduce onward transmission.
+    infectious_A = p$first_infection_infectiousness  * (I0 + I0v) +
+                   p$second_infection_infectiousness * (I1 + I1v) +
+                   p$third_infection_infectiousness  * (I2 + I2v) +
+                   p$third_infection_infectiousness  * (I3 + I3v)
+
     FoI_tmp  = p$beta_A * season_scalar * seasonality_factor * p$contact_scalar *
                (infectious_A / p$population$population)
     lambda_A = rowSums(matrix(rep(FoI_tmp, p$n_age), ncol = p$n_age, byrow = TRUE) * p$contact_matrix)
 
-    # Residual susceptibility of vaccinated individuals (1 = no protection,
-    # 0 = full protection). Combines vaccine effectiveness (vacc_IE) with the
-    # age-specific waning curve (vaccine_rel_protection).
-    vaccine_immunity = 1 - p$vacc_IE * unlist(p$vaccine_rel_protection)
+    # ---- Vaccine immunity ----
+    # Infant: residual susceptibility indexed by age group (age ≈ time since vaccination).
+    # 1 = no protection, 0 = full protection.
+    infant_vaccine_immunity <- 1 - p$infant_vacc_IE * unlist(p$infant_vaccine_rel_protection)
+
+    # Adult: residual susceptibility indexed by waning stage j = 1..W.
+    adult_vacc_immunity <- 1 - p$adult_vacc_IE * unlist(p$adult_vaccine_rel_protection)
+
+    # VE against severity — convert overall (trial-reported) to conditional on infection.
+    # VE_sev_cond = 1 - (1 - VE_hosp_overall) / (1 - VE_acq)
+    infant_vacc_IE_hosp_cond <- 1 - (1 - p$infant_vacc_IE_hosp) / (1 - p$infant_vacc_IE)
+    adult_vacc_IE_hosp_cond  <- 1 - (1 - p$adult_vacc_IE_hosp)  / (1 - p$adult_vacc_IE)
+
+    # ---- Adult V-stage infection flows ----
+    # For each tier k and waning stage j, infection flow from V_k_j[a] to E_kv[a]:
+    #   flow[a,j] = susceptibility * prior_prot_k * adult_vacc_immunity[j] * lambda_A[a] * V_k_mat[a,j]
+    # Computed as n_age × W matrices: sweep scales column j by adult_vacc_immunity[j],
+    # then row-multiplication by the age-specific infection rate handles lambda_A.
+    V1_infection_flow <- (p$susceptibility * p$prior_infection_protection  * lambda_A) *
+                           sweep(V1_mat, 2, adult_vacc_immunity, "*")
+    V2_infection_flow <- (p$susceptibility * p$prior_2infection_protection * lambda_A) *
+                           sweep(V2_mat, 2, adult_vacc_immunity, "*")
+    V3_infection_flow <- (p$susceptibility * p$prior_3infection_protection * lambda_A) *
+                           sweep(V3_mat, 2, adult_vacc_immunity, "*")
+
+    # Assign per-stage derivatives so the generic assembly loop below can find them
+    for (.j in seq_len(p$W)) {
+      assign(paste0("dV1_", .j), -V1_infection_flow[, .j])
+      assign(paste0("dV2_", .j), -V2_infection_flow[, .j])
+      assign(paste0("dV3_", .j), -V3_infection_flow[, .j])
+    }
+
+    # Total daily inflow into vaccinated-exposed compartments (sum over all stages)
+    E1v_inflow <- rowSums(V1_infection_flow)
+    E2v_inflow <- rowSums(V2_infection_flow)
+    E3v_inflow <- rowSums(V3_infection_flow)
 
     # ---- Per-age hospitalisation risk for the current RSV season ----
     # Step function on the season-start dates (Aug 1 of each season_year).
@@ -281,91 +328,106 @@ rsv_model = function(t, y, p){
     .s_idx = findInterval(current_date_num, p$p_hosp_A_season_starts_num)
     p_hosp_A_t = if (.s_idx >= 1) p$p_hosp_A_by_season[.s_idx, ] else p$p_hosp_A_fallback
 
-    # New infections per day, by age group. Susceptibles flow at the
-    # baseline hazard; vaccinated individuals (V0) flow at the residual hazard.
-    incidence_A = p$susceptibility * lambda_A * (S0 + S1 + S2 + S3) +
-                  (p$susceptibility * vaccine_immunity) * lambda_A * V0
+    # ---- Incidence ----
+    incidence_vacc_infant <- (p$susceptibility * infant_vaccine_immunity) * lambda_A * V0
+    incidence_vacc_adult  <- E1v_inflow + E2v_inflow + E3v_inflow
+    incidence_A <- p$susceptibility * lambda_A * (S0 + S1 + S2 + S3) +
+                   incidence_vacc_infant + incidence_vacc_adult
 
-    # Confirmed (reported) cases — a fraction of true incidence.
     cases_A = p$p_confirm_A * incidence_A
 
-    # Hospital admissions per day = rate of progression out of I (1/theta)
-    # times the per-infection hospitalisation probability (already age-adjusted
-    # in age_relativity() and time-varying at the current 4-week burden
-    # window), times confirmation rate.
-    hospital_admissions_A = p$p_confirm_hosp_A * (p_hosp_A_t * 1/p$theta * (I0 + I1 + I2 + I3))
+    # Hospital admissions: vaccinated streams use reduced p_hosp (VE against severity)
+    hospital_admissions_A =
+      p$p_confirm_hosp_A * (
+        p_hosp_A_t * (1/p$theta) * (I0 + I1 + I2 + I3) +                              # unvaccinated
+        p_hosp_A_t * (1 - infant_vacc_IE_hosp_cond) * (1/p$theta) * I0v +             # infant vaccinated
+        p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)  * (1/p$theta) * (I1v + I2v + I3v) # adult vaccinated
+      )
 
-    # Deaths per day = rate of dying out of H (1/mu) times death probability
-    # times confirmation rate.
     deaths = p$p_confirm_death * p$p_death * 1/p$mu * (H0 + H1 + H2 + H3)
 
-    # Share of new infections occurring in vaccinated individuals (V0).
-    # Guard against 0/0 when there are no infections in an age group.
+    # Share of new infections in vaccinated individuals (all streams combined)
     incidence_prop_vacc = ifelse(incidence_A > 0,
-                                 (p$susceptibility * vaccine_immunity) * lambda_A * V0 / incidence_A,
+                                 (incidence_vacc_infant + incidence_vacc_adult) / incidence_A,
                                  0)
-    
+
     #---- Ordinary differential equations ----
-    # Baseline population - no previous exposure
-    dV0 = - (p$susceptibility * vaccine_immunity) * lambda_A * V0 # Vaccinated individuals (either directly with mAbs, or via maternal vaccination)
-    dS0 = - p$susceptibility * lambda_A * S0
-    dE0 = (p$susceptibility * lambda_A * S0) + ((p$susceptibility * vaccine_immunity) * lambda_A * V0) - (1/p$gamma_A * E0)
-    dI0 = (1/p$gamma_A * E0) - (1/p$theta * I0)
-    # Note: p_hosp_A_t already includes age effect and current-window scaling,
-    # see age_relativity() and the per-step lookup above.
-    dH0 = (p_hosp_A_t * 1/p$theta * I0) - ((1-p$p_death) * 1/p$delta * H0) - (p$p_death * 1/p$mu * H0)
-    dR0 = (1-p_hosp_A_t) * 1/p$theta * I0 + ((1-p$p_death) * 1/p$delta * H0) - (1/p$omega_1 * R0)
-    dD0 = (p$p_death * 1/p$mu * H0)
 
-    # Population with 1x previous exposure
-    dS1 = - p$susceptibility * p$prior_infection_protection * lambda_A * S1 + (1/p$omega_1 * R0)
-    dE1 = (p$susceptibility * p$prior_infection_protection * lambda_A * S1) - (1/p$gamma_A * E1)
-    dI1 = (1/p$gamma_A * E1) - (1/p$theta * I1)
-    dH1 = (p_hosp_A_t * 1/p$theta * I1) - ((1-p$p_death) * 1/p$delta * H1) - (p$p_death * 1/p$mu * H1)
-    dR1 = (1-p_hosp_A_t) * 1/p$theta * I1 + ((1-p$p_death) * 1/p$delta * H1) - (1/p$omega_2 * R1)
-    dD1 = (p$p_death * 1/p$mu * H1)
+    # Naive tier — infant vaccination stream (V0 → E0v, S0 → E0)
+    dV0  <- -(p$susceptibility * infant_vaccine_immunity) * lambda_A * V0
+    dS0  <- -p$susceptibility * lambda_A * S0
+    dE0  <-  p$susceptibility * lambda_A * S0 - (1/p$gamma_A) * E0
+    dE0v <-  incidence_vacc_infant             - (1/p$gamma_A) * E0v
+    dI0  <-  (1/p$gamma_A) * E0  - (1/p$theta) * I0
+    dI0v <-  (1/p$gamma_A) * E0v - (1/p$theta) * I0v
+    # p_hosp_A_t already includes age effect; see age_relativity()
+    dH0  <-  p_hosp_A_t * (1/p$theta) * I0 +
+             p_hosp_A_t * (1 - infant_vacc_IE_hosp_cond) * (1/p$theta) * I0v -
+             (1 - p$p_death) * (1/p$delta) * H0 - p$p_death * (1/p$mu) * H0
+    dR0  <-  (1 - p_hosp_A_t) * (1/p$theta) * I0 +
+             (1 - p_hosp_A_t * (1 - infant_vacc_IE_hosp_cond)) * (1/p$theta) * I0v +
+             (1 - p$p_death) * (1/p$delta) * H0 - (1/p$omega_1) * R0
+    dD0  <-  p$p_death * (1/p$mu) * H0
 
-    # Exposure 2x
-    dS2 = - p$susceptibility * p$prior_2infection_protection * lambda_A * S2 + (1/p$omega_2 * R1)
-    dE2 = (p$susceptibility * p$prior_2infection_protection * lambda_A * S2) - (1/p$gamma_A * E2)
-    dI2 = (1/p$gamma_A * E2) - (1/p$theta * I2)
-    dH2 = (p_hosp_A_t * 1/p$theta * I2) - ((1-p$p_death) * 1/p$delta * H2) - (p$p_death * 1/p$mu * H2)
-    dR2 = (1-p_hosp_A_t) * 1/p$theta * I2 + ((1-p$p_death) * 1/p$delta * H2) - (1/p$omega_3 * R2)
-    dD2 = (p$p_death * 1/p$mu * H2)
+    # Tier 1 — adult vaccination stream (V1_j → E1v, S1 → E1)
+    dS1  <- -p$susceptibility * p$prior_infection_protection * lambda_A * S1 + (1/p$omega_1) * R0
+    dE1  <-  p$susceptibility * p$prior_infection_protection * lambda_A * S1 - (1/p$gamma_A) * E1
+    dE1v <-  E1v_inflow - (1/p$gamma_A) * E1v
+    dI1  <-  (1/p$gamma_A) * E1  - (1/p$theta) * I1
+    dI1v <-  (1/p$gamma_A) * E1v - (1/p$theta) * I1v
+    dH1  <-  p_hosp_A_t * (1/p$theta) * I1 +
+             p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond) * (1/p$theta) * I1v -
+             (1 - p$p_death) * (1/p$delta) * H1 - p$p_death * (1/p$mu) * H1
+    dR1  <-  (1 - p_hosp_A_t) * (1/p$theta) * I1 +
+             (1 - p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)) * (1/p$theta) * I1v +
+             (1 - p$p_death) * (1/p$delta) * H1 - (1/p$omega_2) * R1
+    dD1  <-  p$p_death * (1/p$mu) * H1
 
-    # Exposure 3x or more
-    dS3 = - p$susceptibility * p$prior_3infection_protection * lambda_A * S3 + (1/p$omega_3 * R2) + (1/p$omega_4 * R3)
-    dE3 = (p$susceptibility * p$prior_3infection_protection * lambda_A * S3) - (1/p$gamma_A * E3)
-    dI3 = (1/p$gamma_A * E3) - (1/p$theta * I3)
-    dH3 = (p_hosp_A_t * 1/p$theta * I3) - ((1-p$p_death) * 1/p$delta * H3) - (p$p_death * 1/p$mu * H3)
-    dR3 = (1-p_hosp_A_t) * 1/p$theta * I3 + ((1-p$p_death) * 1/p$delta * H3) - (1/p$omega_4 * R3)
-    dD3 = (p$p_death * 1/p$mu * H3)
-    
-    
-    # Combine derivatives into a named vector
-    derivatives <- matrix(0,p$n_age,length(extract_states))
-    for(i_state in 1:length(extract_states)){
-      derivatives[,i_state] <- get(paste0("d", extract_states[i_state]))
+    # Tier 2
+    dS2  <- -p$susceptibility * p$prior_2infection_protection * lambda_A * S2 + (1/p$omega_2) * R1
+    dE2  <-  p$susceptibility * p$prior_2infection_protection * lambda_A * S2 - (1/p$gamma_A) * E2
+    dE2v <-  E2v_inflow - (1/p$gamma_A) * E2v
+    dI2  <-  (1/p$gamma_A) * E2  - (1/p$theta) * I2
+    dI2v <-  (1/p$gamma_A) * E2v - (1/p$theta) * I2v
+    dH2  <-  p_hosp_A_t * (1/p$theta) * I2 +
+             p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond) * (1/p$theta) * I2v -
+             (1 - p$p_death) * (1/p$delta) * H2 - p$p_death * (1/p$mu) * H2
+    dR2  <-  (1 - p_hosp_A_t) * (1/p$theta) * I2 +
+             (1 - p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)) * (1/p$theta) * I2v +
+             (1 - p$p_death) * (1/p$delta) * H2 - (1/p$omega_3) * R2
+    dD2  <-  p$p_death * (1/p$mu) * H2
+
+    # Tier 3+
+    dS3  <- -p$susceptibility * p$prior_3infection_protection * lambda_A * S3 + (1/p$omega_3) * R2 + (1/p$omega_4) * R3
+    dE3  <-  p$susceptibility * p$prior_3infection_protection * lambda_A * S3 - (1/p$gamma_A) * E3
+    dE3v <-  E3v_inflow - (1/p$gamma_A) * E3v
+    dI3  <-  (1/p$gamma_A) * E3  - (1/p$theta) * I3
+    dI3v <-  (1/p$gamma_A) * E3v - (1/p$theta) * I3v
+    dH3  <-  p_hosp_A_t * (1/p$theta) * I3 +
+             p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond) * (1/p$theta) * I3v -
+             (1 - p$p_death) * (1/p$delta) * H3 - p$p_death * (1/p$mu) * H3
+    dR3  <-  (1 - p_hosp_A_t) * (1/p$theta) * I3 +
+             (1 - p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)) * (1/p$theta) * I3v +
+             (1 - p$p_death) * (1/p$delta) * H3 - (1/p$omega_4) * R3
+    dD3  <-  p$p_death * (1/p$mu) * H3
+
+    # Combine derivatives into a named vector.
+    # The loop finds dV0, dV1_1..dV1_W, dV2_1..dV2_W, dV3_1..dV3_W,
+    # dS0..dD3, dE0v..dI3v via get() in the current environment.
+    derivatives <- matrix(0, p$n_age, length(extract_states))
+    for (i_state in seq_along(extract_states)) {
+      derivatives[, i_state] <- get(paste0("d", extract_states[i_state]))
     }
-    
+
     derivatives <- c(derivatives)
-    names(derivatives) <- paste0("d",rep(extract_states,each=p$n_age), "_", p$age_groups)
-    
-    # Name the incidence variables
-    names(incidence_A) = paste0("incidence_A", "_", p$age_groups)
-    
-    # Name the confirmed case variables
-    names(cases_A) = paste0("cases_A", "_", p$age_groups)
-    
-    # Name the hospital admissions variables
-    names(hospital_admissions_A) = paste0("hospital_admissions_A", "_", p$age_groups)
-    
-    # Name the death count variable
-    names(deaths) = paste0("deaths", "_", p$age_groups)
-    
-    # Name the death count variable
-    names(incidence_prop_vacc) = paste0("incidence_prop_vacc", "_", p$age_groups)
-    names(seasonality_factor) = "seasonality_factor"
+    names(derivatives) <- paste0("d", rep(extract_states, each = p$n_age), "_", p$age_groups)
+
+    names(incidence_A)          = paste0("incidence_A",          "_", p$age_groups)
+    names(cases_A)              = paste0("cases_A",              "_", p$age_groups)
+    names(hospital_admissions_A)= paste0("hospital_admissions_A","_", p$age_groups)
+    names(deaths)               = paste0("deaths",               "_", p$age_groups)
+    names(incidence_prop_vacc)  = paste0("incidence_prop_vacc",  "_", p$age_groups)
+    names(seasonality_factor)   = "seasonality_factor"
 
     return(list(derivatives,
                 incidence_A,
@@ -374,7 +436,7 @@ rsv_model = function(t, y, p){
                 incidence_prop_vacc,
                 deaths,
                 seasonality_factor))
-    
+
   }) # end with
   
   
