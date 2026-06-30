@@ -108,13 +108,13 @@ plot_scenarios = function(o, fig_name, ...) {
                          time  = 1 : length(all_dates))
   
   # Define correct order of age_group and metric
-  age_levels = c("0-1m", "1-2m", "2-3m", "3-4m", "4-5m", "5-6m", 
-                 "6-7m", "7-8m", "8-9m", "9-10m", "10-11m", "11-12m", 
-                 "12-13m", "13-14m", "14-15m", "15-16m", "16-17m", "17-18m", 
-                 "18-19m", "19-20m", "20-21m", "21-22m", "22-23m", "23-24m", 
-                 "24-30m", "30-36m", "3-4y",  "4-5y", "5-18y", 
-                 "18-65y",
-                 "65+y")
+  age_levels = c("0-1m", "1-2m", "2-3m", "3-4m", "4-5m", "5-6m",
+                 "6-7m", "7-8m", "8-9m", "9-10m", "10-11m", "11-12m",
+                 "12-13m", "13-14m", "14-15m", "15-16m", "16-17m", "17-18m",
+                 "18-19m", "19-20m", "20-21m", "21-22m", "22-23m", "23-24m",
+                 "24-30m", "30-36m", "3-4y", "4-5y", "5-18y",
+                 "18-59y", "60-64y",
+                 "65-69y", "70-74y", "75-79y", "80+y")
   metric_levels = c("hospital_admissions")
   
   
@@ -320,7 +320,8 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
       filter(data_freq == "4-weekly")
     
     # Order age groups (adjust if your set differs)
-    age_order <- c("0-3m","3-6m","6-12m","1-5y","5-65y","65+y")
+    age_order <- c("0-3m", "3-6m", "6-12m", "1-5y", "5-18y", "18-59y",
+                   "60-64y", "65-69y", "70-74y", "75-79y", "80+y")
     
     # 1) Summarise model to one value per param_id x age_group (mean here)
     model_sum <- model_use %>%
@@ -373,11 +374,16 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
     
     age_labels <- c(
       "0-3m"   = "<3 months",
-      "3-6m"  = "3-6 months",
+      "3-6m"   = "3-6 months",
       "6-12m"  = "6-12 months",
-      "1-5y"  = "1-5 years",
-      "5-65y" = "15-64 years",
-      "65+y"   = "65+ years"
+      "1-5y"   = "1-5 years",
+      "5-18y"  = "5-18 years",
+      "18-59y" = "18-59 years",
+      "60-64y" = "60-64 years",
+      "65-69y" = "65-69 years",
+      "70-74y" = "70-74 years",
+      "75-79y" = "75-79 years",
+      "80+y"   = "80+ years"
     )
     
     # Plot

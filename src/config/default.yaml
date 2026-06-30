@@ -152,8 +152,12 @@ initial_conditions:
 - { age_group: "3-4y",   tier: 3, prop_S: 0.85, prop_E: 0.00023, prop_I_unit: 0.0075 }
 - { age_group: "4-5y",   tier: 3, prop_S: 0.85, prop_E: 0.00023, prop_I_unit: 0.0075 }
 - { age_group: "5-18y",  tier: 3, prop_S: 0.80, prop_E: 0.00038, prop_I_unit: 0.0125 }
-- { age_group: "18-65y", tier: 3, prop_S: 0.83, prop_E: 0.00028, prop_I_unit: 0.0090 }
-- { age_group: "65+y",   tier: 3, prop_S: 0.88, prop_E: 0.00018, prop_I_unit: 0.0058 }
+- { age_group: "18-59y", tier: 3, prop_S: 0.83, prop_E: 0.00028, prop_I_unit: 0.0090 }
+- { age_group: "60-64y", tier: 3, prop_S: 0.85, prop_E: 0.00023, prop_I_unit: 0.0075 }
+- { age_group: "65-69y", tier: 3, prop_S: 0.88, prop_E: 0.00018, prop_I_unit: 0.0058 }
+- { age_group: "70-74y", tier: 3, prop_S: 0.88, prop_E: 0.00018, prop_I_unit: 0.0058 }
+- { age_group: "75-79y", tier: 3, prop_S: 0.88, prop_E: 0.00018, prop_I_unit: 0.0058 }
+- { age_group: "80+y",   tier: 3, prop_S: 0.88, prop_E: 0.00018, prop_I_unit: 0.0058 }
 
 
 # ---- State durations ----
