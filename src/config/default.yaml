@@ -76,7 +76,7 @@ k: 0.1
 
 # Metrics to store in (scenario) output
 # note: remove 'metrics_to_save' to obtain all model output
-metrics_to_save: [susceptibles, latent, infectious, cases, deaths, hospital_admissions, total, n_doses, vaccinated, incidence_prop_vacc]
+metrics_to_save: [susceptibles, latent, infectious, cases, deaths, hospital_admissions, total, n_doses, vaccinated, incidence_prop_vacc, hosp_prop_vacc]
 
 # ---- Initialisation settings ----
 # Seasonality profile
@@ -205,22 +205,26 @@ infant_vaccine_rel_protection: [ # relative vaccination protection by age group
   0, 0, 0, 0, 0, 0, 0, # 5-18y, 18-59y, 60-64y, 65-69y, 70-74y, 75-79y, 80+y
 ] # Values from RespiCompass mean waning curves https://github.com/european-modelling-hubs/RespiCompass/blob/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/waning/waning_curves.csv
 infant_vacc_IE: 0.87      # VE against acquisition for infants; values from RespiCompass
-infant_vacc_IE_hosp: 0.80 # Overall VE against hospitalisation for infants (unconditional; model derives conditional internally)
+infant_vacc_IE_hosp: 0.90 # Overall VE against hospitalisation for infants (unconditional, must be >= infant_vacc_IE; model derives conditional internally)
 infant_vacc_coverage: 0.83
 
 # ---- Adult vaccine efficacy ----
 # PLACEHOLDER FIXME - replace with trial-derived estimates when available
-# 1 means no protection, 0 is full protection; indexed by months since vaccination
+# Relative protection indexed by MONTHS SINCE VACCINATION: 1 = full protection
+# at the peak vaccine effect, decaying to 0 (fully waned) by month W. The vaccine
+# effect itself is scaled by adult_vacc_IE below; residual susceptibility is
+# immunity = 1 - adult_vacc_IE * rel_protection. Protection is therefore HIGHEST
+# just after vaccination (month 1) and wanes to nothing by month 36.
 adult_vaccine_rel_protection: [
-  0.150, 0.174, 0.199, 0.223, 0.247, 0.271, # months 1-6
-  0.296, 0.320, 0.344, 0.369, 0.393, 0.417, # months 7-12
-  0.441, 0.466, 0.490, 0.514, 0.539, 0.563, # months 13-18
-  0.587, 0.611, 0.636, 0.660, 0.684, 0.709, # months 19-24
-  0.733, 0.757, 0.781, 0.806, 0.830, 0.854, # months 25-30
-  0.879, 0.903, 0.927, 0.951, 0.976, 1.000  # months 31-36
+  1.000, 0.971, 0.943, 0.914, 0.886, 0.857, # months 1-6
+  0.829, 0.800, 0.771, 0.743, 0.714, 0.686, # months 7-12
+  0.657, 0.629, 0.600, 0.571, 0.543, 0.514, # months 13-18
+  0.486, 0.457, 0.429, 0.400, 0.371, 0.343, # months 19-24
+  0.314, 0.286, 0.257, 0.229, 0.200, 0.171, # months 25-30
+  0.143, 0.114, 0.086, 0.057, 0.029, 0.000  # months 31-36
 ]
 adult_vacc_IE: 0.80      # VE against acquisition for adults (PLACEHOLDER FIXME)
-adult_vacc_IE_hosp: 0.77 # Overall VE against hospitalisation for adults (unconditional; model derives conditional internally) (PLACEHOLDER FIXME)
+adult_vacc_IE_hosp: 0.90 # Overall VE against hospitalisation for adults (unconditional, must be >= adult_vacc_IE; model derives conditional internally) (PLACEHOLDER FIXME)
 adult_vacc_coverage: 0.0 # Set per country (e.g. IE.yaml); default 0 means no adult vaccination
 adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
 W: 36 # Waning chain length in months (duration of adult vaccine protection)

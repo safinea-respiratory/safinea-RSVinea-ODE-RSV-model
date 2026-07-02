@@ -145,7 +145,7 @@ Parameters that should vary stochastically across simulations are specified with
 |-----------|-------------|-------------|
 | `beta_A` | Baseline transmission rate (strain A) | Yes |
 | `amplitude` | Seasonal forcing amplitude | Yes |
-| `peak_day` | Day-of-year of peak transmission | Yes |
+| `peak_day` | Days after simulation start to the first seasonal peak (not a calendar day-of-year) | Yes |
 | `seasonality_exponent` | Shape of the cosine seasonality curve | Yes |
 | `season2_effect`, `season3_effect` | Year-to-year scalars on beta | Yes |
 | `omega_1`–`omega_4` | Waning immunity durations (days) | Yes |

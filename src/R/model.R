@@ -89,6 +89,24 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # Account for relative susceptibility, hospitalisation and mortality rates by age
   p = age_relativity(p)
 
+  # ---- Sanity check: VE against severity must be well-defined ----
+  # The conditional VE against hospitalisation is derived from the overall
+  # (unconditional) VE via  VE_sev_cond = 1 - (1 - VE_hosp) / (1 - VE_acq).
+  # This is only non-negative when VE_hosp >= VE_acq. If violated, vaccinated
+  # infecteds would be hospitalised at a HIGHER rate than unvaccinated, which
+  # is nonsensical — so fail early with a clear message rather than silently
+  # producing perverse dynamics.
+  for (.v in c("infant", "adult")) {
+    ve_acq  <- p[[paste0(.v, "_vacc_IE")]]
+    ve_hosp <- p[[paste0(.v, "_vacc_IE_hosp")]]
+    if (ve_hosp < ve_acq)
+      stop(sprintf(
+        paste0("%s vaccine: overall VE against hospitalisation (%.3f) must be ",
+               ">= VE against acquisition (%.3f), otherwise the conditional VE ",
+               "against severity is negative. Check %s_vacc_IE / %s_vacc_IE_hosp."),
+        .v, ve_hosp, ve_acq, .v, .v))
+  }
+
   # ---- Model set up ---
   if (verbose != "none") message(" - Running model")
   
@@ -248,9 +266,13 @@ rsv_model = function(t, y, p){
 
   with(states, {
     
-    # Seasonality: cosine wave with peak at `peak_day` (day of year),
-    # raised to `seasonality_exponent` while preserving sign to allow
-    # asymmetric peaks/troughs. Amplitude=0 disables seasonality.
+    # Seasonality: cosine wave (365-day period) raised to `seasonality_exponent`
+    # while preserving sign to allow asymmetric peaks/troughs. Amplitude=0
+    # disables seasonality.
+    # NB: `t` is measured in days SINCE start_date (the simulation origin), so
+    # `peak_day` is the offset (in days) from start_date to the first seasonal
+    # peak — NOT a calendar day-of-year. E.g. peak_day = 110 means the peak
+    # occurs 110 days after start_date (and every 365 days thereafter).
     cval <- cos(2 * pi * (t - p$peak_day) / 365)
     seasonality_factor <- 1 + p$amplitude * sign(cval) * abs(cval)^p$seasonality_exponent
 
@@ -341,19 +363,31 @@ rsv_model = function(t, y, p){
     cases_A = p$p_confirm_A * incidence_A
 
     # Hospital admissions: vaccinated streams use reduced p_hosp (VE against severity)
-    hospital_admissions_A =
+    hospital_admissions_vacc =
       p$p_confirm_hosp_A * (
-        p_hosp_A_t * (1/p$theta) * (I0 + I1 + I2 + I3) +                              # unvaccinated
         p_hosp_A_t * (1 - infant_vacc_IE_hosp_cond) * (1/p$theta) * I0v +             # infant vaccinated
         p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)  * (1/p$theta) * (I1v + I2v + I3v) # adult vaccinated
       )
+    hospital_admissions_A =
+      p$p_confirm_hosp_A * (
+        p_hosp_A_t * (1/p$theta) * (I0 + I1 + I2 + I3)                                # unvaccinated
+      ) + hospital_admissions_vacc
 
     deaths = p$p_confirm_death * p$p_death * 1/p$mu * (H0 + H1 + H2 + H3)
 
-    # Share of new infections in vaccinated individuals (all streams combined)
+    # Share of new infections in vaccinated individuals (all streams combined).
+    # Used to split the CASES/incidence burden into vaccinated / unvaccinated.
     incidence_prop_vacc = ifelse(incidence_A > 0,
                                  (incidence_vacc_infant + incidence_vacc_adult) / incidence_A,
                                  0)
+
+    # Share of hospital admissions in vaccinated individuals. This is NOT the
+    # same as incidence_prop_vacc: vaccinated infecteds have a lower probability
+    # of hospitalisation (VE against severity), so their share of admissions is
+    # smaller than their share of infections. Used to split the HOSPITAL burden.
+    hosp_prop_vacc = ifelse(hospital_admissions_A > 0,
+                            hospital_admissions_vacc / hospital_admissions_A,
+                            0)
 
     #---- Ordinary differential equations ----
 
@@ -431,6 +465,7 @@ rsv_model = function(t, y, p){
     names(hospital_admissions_A)= paste0("hospital_admissions_A","_", p$age_groups)
     names(deaths)               = paste0("deaths",               "_", p$age_groups)
     names(incidence_prop_vacc)  = paste0("incidence_prop_vacc",  "_", p$age_groups)
+    names(hosp_prop_vacc)       = paste0("hosp_prop_vacc",       "_", p$age_groups)
     names(seasonality_factor)   = "seasonality_factor"
 
     return(list(derivatives,
@@ -438,6 +473,7 @@ rsv_model = function(t, y, p){
                 cases_A,
                 hospital_admissions_A,
                 incidence_prop_vacc,
+                hosp_prop_vacc,
                 deaths,
                 seasonality_factor))
 
@@ -733,7 +769,26 @@ format_output = function(out_df, p) {
     summarise(value = sum(val),
               .groups = "drop") %>%
     mutate(metric = "incidence_prop_vacc",
-           variant = "A") 
+           variant = "A")
+
+  #---- Proportion of hospital admissions in vaccinated individuals ----
+  # Distinct from incidence_prop_vacc: vaccinated infecteds have a lower
+  # hospitalisation probability (VE against severity), so their share of
+  # admissions differs from their share of infections. Used in
+  # results_evaluation to split the hospital burden into vacc / unvacc streams.
+  hosp_prop_vacc_cols = c(outer("hosp_prop_vacc_", p$age_groups, paste0)) %>%
+    as.vector()
+
+  hosp_prop_vacc_df = out_df %>% pivot_longer(cols = all_of(hosp_prop_vacc_cols),
+                                       names_to = "compartment",
+                                       values_to = "val") %>%
+    mutate(age_group = sub(".*_", "", compartment),
+           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
+    group_by(time, age_group) %>%
+    summarise(value = sum(val),
+              .groups = "drop") %>%
+    mutate(metric = "hosp_prop_vacc",
+           variant = "A")
   
   #---- Confirmed cases (ILI+) ----
   # Select incidence columns
@@ -909,6 +964,7 @@ format_output = function(out_df, p) {
   m = bind_rows(S_df,
                 new_A_df,
                 incidence_prop_vacc_df,
+                hosp_prop_vacc_df,
                 cases_A_df,
                 E_A_df,
                 I_A_df,

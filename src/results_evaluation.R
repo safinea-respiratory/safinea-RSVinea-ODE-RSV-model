@@ -82,19 +82,36 @@ all_dates = seq(from = ymd(o$plot_start_date), by = "day", length.out = duration
 dates_df  = data.table(date = all_dates, 
                        time  = 1 : length(all_dates))
 
-# Get a dataframe with "incidence_prop_vacc" metric to be able to separate vacc and unvacc numbers for each metric
-prop_vacc_df = results_df %>%
-  filter(metric == "incidence_prop_vacc") %>% 
-  rename(prop_outcomes_in_vacc = value) %>%
+# Vaccinated-share proportions, one per burden stream. These differ because
+# vaccinated infecteds have a lower probability of hospitalisation (VE against
+# severity), so their share of ADMISSIONS is smaller than their share of
+# INFECTIONS:
+#  - cases / incidence   -> incidence_prop_vacc
+#  - hospital admissions -> hosp_prop_vacc
+prop_vacc_inf = results_df %>%
+  filter(metric == "incidence_prop_vacc") %>%
+  rename(prop_inf = value) %>%
+  select(-metric)
+
+prop_vacc_hosp = results_df %>%
+  filter(metric == "hosp_prop_vacc") %>%
+  rename(prop_hosp = value) %>%
   select(-metric)
 
 # Prepare output
 results_df = results_df %>% inner_join(dates_df, by = "time") %>%
   # Add needed columns
   filter(metric %in% metric_levels) %>%
-  left_join(prop_vacc_df, by = join_by(time, age_group, variant, param_id, scenario, location)) %>%
+  left_join(prop_vacc_inf,  by = join_by(time, age_group, variant, param_id, scenario, location)) %>%
+  left_join(prop_vacc_hosp, by = join_by(time, age_group, variant, param_id, scenario, location)) %>%
   left_join(age_group_map, by = join_by(age_group)) %>%
-  mutate(date_week = floor_date(as.Date(date), "week", week_start = 1),
+  # Pick the vaccinated-share appropriate to each metric
+  mutate(prop_outcomes_in_vacc = case_when(
+           metric == "cases"               ~ prop_inf,
+           metric == "hospital_admissions" ~ prop_hosp,
+           TRUE ~ 0
+         ),
+         date_week = floor_date(as.Date(date), "week", week_start = 1),
          scenario = factor(scenario, levels = f$scenarios),
          param_id = str_replace(param_id, "^((?:[^_]+_){2}).*$", "\\1")
   ) %>%
