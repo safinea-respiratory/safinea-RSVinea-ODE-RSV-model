@@ -271,6 +271,14 @@ rsv_model = function(t, y, p){
   V2_mat <- as.matrix(states[, paste0("V2_", seq_len(p$W)), drop=FALSE])
   V3_mat <- as.matrix(states[, paste0("V3_", seq_len(p$W)), drop=FALSE])
 
+  # Current living population per age group (excludes cumulative deaths D0-D3).
+  # Used as the frequency-dependent FoI denominator, so prevalence tracks the
+  # actual population as births, ageing and background mortality change it over
+  # time. At t=0 this equals the initial population (S+E+I+R), so there is no
+  # discontinuity relative to the previous fixed-denominator formulation.
+  living_cols <- setdiff(p$compartments, c("D0", "D1", "D2", "D3"))
+  N_living    <- rowSums(states[living_cols])
+
   with(states, {
     
     # Seasonality: cosine wave (365-day period) raised to `seasonality_exponent`
@@ -300,7 +308,7 @@ rsv_model = function(t, y, p){
                    p$third_infection_infectiousness  * (I3 + I3v)
 
     FoI_tmp  = p$beta_A * season_scalar * seasonality_factor * p$contact_scalar *
-               (infectious_A / p$population$population)
+               (infectious_A / N_living)
     lambda_A = rowSums(matrix(rep(FoI_tmp, p$n_age), ncol = p$n_age, byrow = TRUE) * p$contact_matrix)
 
     # ---- Vaccine immunity ----
