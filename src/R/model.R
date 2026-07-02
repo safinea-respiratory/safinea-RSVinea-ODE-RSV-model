@@ -107,6 +107,13 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
         .v, ve_hosp, ve_acq, .v, .v))
   }
 
+  # ---- Sanity check: background mortality vector length ----
+  # One annual mortality rate per age group is required (applied in ageing_event).
+  n_mort <- length(unlist(p$background_mortality_rate))
+  if (n_mort != p$n_age)
+    stop("background_mortality_rate has ", n_mort, " values but there are ",
+         p$n_age, " age groups; it must have exactly one rate per age group.")
+
   # ---- Model set up ---
   if (verbose != "none") message(" - Running model")
   
@@ -485,7 +492,10 @@ rsv_model = function(t, y, p){
 # ---------------------------------------------------------
 # Monthly ageing event
 # ---------------------------------------------------------
-# Fired by deSolve on the first day of each month. Three things happen:
+# Fired by deSolve on the first day of each month. Demography (births, cohort
+# ageing and background mortality) is handled here as discrete monthly steps,
+# keeping it separate from the continuous disease dynamics in rsv_model().
+# Four things happen:
 #
 # 1. DEMOGRAPHIC AGEING: for every compartment we move a fraction
 #    `1/width_months` of each age bin into the next-older bin, so an
@@ -509,9 +519,14 @@ rsv_model = function(t, y, p){
 #       adult_vacc_coverage of S1/S2/S3 in adult_vaccination_agegroups
 #       is moved into V1_1/V2_1/V3_1 (entering the waning chain at stage 1).
 #
-# Note: D* compartments are not age-shifted, so cumulative deaths retain
-# the age group at time of death. Mortality is currently disabled in the
-# configs (p_death = 0); revisit if age-at-observation tracking is needed.
+# 4. BACKGROUND (NON-RSV) MORTALITY: every living compartment is scaled by an
+#    age-specific monthly survival factor. This is the demographic outflow
+#    that balances births/ageing and stops the oldest bin accumulating without
+#    bound. Background deaths leave the model entirely — they are NOT added to
+#    the RSV-death compartments (D0-D3), which track only RSV mortality.
+#
+# Note: D* compartments are not age-shifted, so cumulative RSV deaths retain
+# the age group at time of death.
 ageing_event <- function(t, y, parms) {
 
   # Extract names and split into prefix and age group
@@ -544,6 +559,11 @@ ageing_event <- function(t, y, parms) {
 
   for (pref in unique(prefixes)) {
 
+    # Cumulative RSV-death compartments are frozen: deaths (D) retain the age group
+    # at time of death, so they are neither age-shifted nor birth-replenished.
+    # (Consistent with step 4, which also excludes D0-D3 from mortality.)
+    if (pref %in% c("D0", "D1", "D2", "D3")) next
+
     idx <- which(prefixes == pref)
 
     # Shift individuals from younger to older age bins
@@ -572,7 +592,8 @@ ageing_event <- function(t, y, parms) {
   }
 
   # ---- 2. Adult V-stage waning advancement ----
-  # Advance each tier's waning chain by one month.
+  # Advance each tier's waning chain by one month. 
+  # Note: this is NOT an aging event but accountaing of "vaccine age" (time since vaccination)
   # Process stages from last to first to avoid overwriting values mid-loop.
   for (k in 1:3) {
     idx_Sk <- which(prefixes == paste0("S", k))
@@ -614,6 +635,20 @@ ageing_event <- function(t, y, parms) {
       new_y[idx_Vk1]   <- new_y[idx_Vk1] + to_vacc
     }
   }
+
+  # ---- 4. Background (non-RSV) mortality ----
+  # Apply age-specific all-cause mortality as a discrete monthly step. The
+  # configured background_mortality_rate is an ANNUAL per-capita RATE (hazard),
+  # so the exact monthly survival for a constant hazard is exp(-rate/12); this
+  # compounds to an annual survival of exp(-rate). (If values were instead an
+  # annual PROBABILITY q_x, the correct factor would be (1 - q_x)^(1/12) — see
+  # the units disclaimer in default.yaml.) Applied to every living compartment;
+  # D0-D3 (cumulative RSV deaths) are excluded so background deaths do not
+  # contaminate the RSV-death metric.
+  mort_rate_annual <- setNames(unlist(parms$background_mortality_rate), parms$age_groups)
+  survival_month   <- exp(-mort_rate_annual[age_labels] / 12)
+  is_living        <- !(prefixes %in% c("D0", "D1", "D2", "D3"))
+  new_y[is_living] <- new_y[is_living] * survival_month[is_living]
 
   return(new_y)
 }

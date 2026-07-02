@@ -193,6 +193,41 @@ rel_death_a: 0.0 # First (youngest) age group relative to oldest age group
 rel_death_b: 0.0 # Second age group relative to oldest age group
 rel_death_c: 0.0 # Third age group relative to oldest age group
 
+# ---- Background (non-RSV) mortality ----
+# Age-specific all-cause mortality, applied as a discrete monthly demographic
+# step in the ageing event (consistent with births and cohort ageing). Deaths
+# leave the model entirely and are NOT counted in the RSV-death compartments.
+# One value per age group, in the same order as `age_groups`.
+#
+# !!! UNITS DISCLAIMER — READ BEFORE EDITING !!!
+# These values are interpreted as an annual per-capita mortality RATE (hazard),
+# i.e. expected deaths per person-year. The model applies a monthly survival of
+# exp(-rate/12), which compounds to an annual survival of exp(-rate).
+# This is NOT the same as an annual PROBABILITY of death (a life-table q_x column).
+# If you source q_x (probabilities) rather than a rate, either:
+#   (a) convert to a rate first:  rate = -ln(1 - q_x),  or
+#   (b) change the monthly-survival formula in ageing_event() to (1 - q_x)^(1/12).
+# For small values (< ~0.05) rate and probability are nearly equal, but they
+# diverge for the oldest age groups — exactly where mortality matters most here.
+#
+# PLACEHOLDER FIXME - replace with country life-table values (e.g. Eurostat/CSO).
+background_mortality_rate: [
+  0.0030,                                         # 0-1m (neonatal)
+  0.0004, 0.0004, 0.0004, 0.0004, 0.0004, 0.0004, # 1-7m
+  0.0004, 0.0004, 0.0004, 0.0004, 0.0004,         # 7-12m
+  0.0002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002, # 12-18m
+  0.0002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002, # 18-24m
+  0.0002, 0.0002,                                 # 24-30m, 30-36m
+  0.0001, 0.0001,                                 # 3-4y, 4-5y
+  0.0001,                                         # 5-18y
+  0.0010,                                         # 18-59y
+  0.0060,                                         # 60-64y
+  0.0100,                                         # 65-69y
+  0.0170,                                         # 70-74y
+  0.0300,                                         # 75-79y
+  0.0900                                          # 80+y
+]
+
 # ---- Infant vaccine efficacy ----
 # 1 means no protection, 0 is full protection
 infant_vaccine_rel_protection: [ # relative vaccination protection by age group
