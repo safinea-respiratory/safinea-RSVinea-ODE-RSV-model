@@ -17,13 +17,22 @@ age_groups: ["0-1m", "1-2m", "2-3m", "3-4m", "4-5m", "5-6m", "6-7m", "7-8m", "8-
 age_breaks_months: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
                     21, 22, 23, 24, 30, 36, 48, 60, 216, 720, 780, 840, 900, 960, 1200]
 
-# Label mapping from RespiCompass population data source to RSVinea reporting bands
+# Label mapping from RespiCompass data sources (population / mortality) to the
+# RSVinea reporting-band labels that parse_age_range() understands. The bins are
+# identical, only the label conventions differ (RespiCompass drops the trailing
+# unit and splits adults into 5-year bands, matching this model's adult groups).
 respicompass_age_map:
-  "0-2mo":  "0-3m"
-  "3-5mo":  "3-6m"
+  "0-2mo": "0-3m"
+  "3-5mo": "3-6m"
   "6-11mo": "6-12m"
-  "1-4y":   "1-5y"
-  "5-64y":  "5-65y"
+  "1-4":   "1-5y"
+  "5-17":  "5-18y"
+  "18-59": "18-60y"
+  "60-64": "60-65y"
+  "65-69": "65-70y"
+  "70-74": "70-75y"
+  "75-79": "75-80y"
+  "80+":   "80+y"
 
 # ---- Age group mapping ----
 # Maps fine-grained model age groups to aggregated reporting groups (e.g. RespiCompass bands)
@@ -57,11 +66,15 @@ age_group_map:
   "3-4y":   "1-5y"
   "4-5y":   "1-5y"
   "5-18y":  "5-18y"
-  "18-59y": "18-59y"
-  "60-64y": "60-64y"
-  "65-69y": "65-69y"
-  "70-74y": "70-74y"
-  "75-79y": "75-79y"
+  # Adult reporting bands use exclusive-upper-bound range labels so they match
+  # respicompass_age_map (data -> reporting) exactly. NB the reporting label
+  # differs from the fine group label on the LHS (e.g. fine "18-59y" -> band
+  # "18-60y"); both denote the same [18,60) population.
+  "18-59y": "18-60y"
+  "60-64y": "60-65y"
+  "65-69y": "65-70y"
+  "70-74y": "70-75y"
+  "75-79y": "75-80y"
   "80+y":   "80+y"
 
 # ---- Simulation settings ----
@@ -180,10 +193,12 @@ p_confirm_death: 1    # Confirmation rate for deaths
 # ---- Hospitalisation rate ----
 p_hosp_A: 0.0458 # Probability of severe disease requiring hospitalisation, given infection with strain A, in  oldest age group
 
-# Age-dependent probability of severe disease requiring hospitalisation, given infection with strain A 
-rel_hosp_a_A: 50 # First (youngest) age group relative to oldest age group
-rel_hosp_b_A: 20 # Second age group relative to oldest age group
-rel_hosp_c_A: 10 # Third age group relative to oldest age group
+# Age-dependent multipliers on p_hosp_A (see compute_p_hosp_A_row in model.R).
+rel_hosp_a_A: 50 # Infant amplitude (0-3m; 3-6m/6-12m derived from burden ratios)
+rel_hosp_b_A: 20 # Young-child amplitude (1-5y)
+rel_hosp_c_A: 10 # Older-adult amplitude, anchored at 60-64y = 1.0; the per-band
+                 # gradient across 60-64y..80+y is derived at runtime from the
+                 # observed burden / population (population-normalised rate ratio).
 
 # ---- Mortality rate ----
 p_death: 0.0 # Proportion of hospitalisations resulting in death
@@ -197,20 +212,28 @@ rel_death_c: 0.0 # Third age group relative to oldest age group
 # Age-specific all-cause mortality, applied as a discrete monthly demographic
 # step in the ageing event (consistent with births and cohort ageing). Deaths
 # leave the model entirely and are NOT counted in the RSV-death compartments.
+#
+# SOURCE: This vector is normally OVERRIDDEN AT RUNTIME. The model derives an
+# annual per-capita RATE per age group from the RespiCompass mortality data
+# (annual death counts) divided by the redistributed population
+# (compute_background_mortality() in auxiliary.R). The vector below is only a
+# manual FALLBACK, used when the selected country is absent from that data.
 # One value per age group, in the same order as `age_groups`.
 #
-# !!! UNITS DISCLAIMER — READ BEFORE EDITING !!!
-# These values are interpreted as an annual per-capita mortality RATE (hazard),
-# i.e. expected deaths per person-year. The model applies a monthly survival of
-# exp(-rate/12), which compounds to an annual survival of exp(-rate).
-# This is NOT the same as an annual PROBABILITY of death (a life-table q_x column).
-# If you source q_x (probabilities) rather than a rate, either:
-#   (a) convert to a rate first:  rate = -ln(1 - q_x),  or
-#   (b) change the monthly-survival formula in ageing_event() to (1 - q_x)^(1/12).
-# For small values (< ~0.05) rate and probability are nearly equal, but they
-# diverge for the oldest age groups — exactly where mortality matters most here.
+# ASSUMPTION / LIMITATION — FLAT MONTHLY RATE: whatever annual rate is used
+# (data-derived or the fallback below) is spread UNIFORMLY across the 12 months
+# (monthly survival = exp(-rate/12)). Real all-cause mortality has a mild
+# seasonal pattern (higher in winter); RespiCompass ships mortality_month.csv
+# (share_of_year) to capture this, but we deliberately DO NOT use it here.
 #
-# PLACEHOLDER FIXME - replace with country life-table values (e.g. Eurostat/CSO).
+# !!! UNITS DISCLAIMER — READ BEFORE EDITING THE FALLBACK !!!
+# These values are interpreted as an annual per-capita mortality RATE (hazard),
+# i.e. expected deaths per person-year, applied as monthly survival exp(-rate/12)
+# which compounds to an annual survival of exp(-rate). This is NOT an annual
+# PROBABILITY of death (life-table q_x). If you source q_x, convert first with
+# rate = -ln(1 - q_x), or change the formula in ageing_event() to (1 - q_x)^(1/12).
+#
+# PLACEHOLDER FIXME - fallback only; real rates come from RespiCompass at runtime.
 background_mortality_rate: [
   0.0030,                                         # 0-1m (neonatal)
   0.0004, 0.0004, 0.0004, 0.0004, 0.0004, 0.0004, # 1-7m
@@ -265,17 +288,18 @@ adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
 W: 36 # Waning chain length in months (duration of adult vaccine protection)
 
 # ---- Infant vaccination schedule ----
+# Aligned to the RespiCompass 2026/2027 round (two seasons: 2026/27 and 2027/28).
 # Infants born within this window are vaccinated at birth
-infant_vaccination_start: ["2024-09-01", "2025-09-01"]
-infant_vaccination_end: ["2025-02-28", "2026-02-28"]
+infant_vaccination_start: ["2026-09-01", "2027-09-01"]
+infant_vaccination_end: ["2027-02-28", "2028-02-28"]
 # One-time catch-up campaign for infants born outside the RSV season
-infant_vaccination_catch_up_date: "2025-09-01"
+infant_vaccination_catch_up_date: "2026-09-01"
 infant_vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m"]
 infant_vaccination_catch_up_coverage: 0.40
 
 # ---- Adult vaccination schedule ----
 # Single annual campaign date(s); eligible adults are vaccinated on this date each year
-adult_vaccination_dates: ["2024-10-01", "2025-10-01"]
+adult_vaccination_dates: ["2026-10-01", "2027-10-01"]
 
 # 
 #season_effect: [1.03, 1.0, 0.95]
@@ -328,8 +352,8 @@ calibration_options:
  data_source:
     epi: "RESPICOMPASS"      # OPTIONS: 'RESPICOMPASS', 'USER-DEFINED'
  country: "IE"         # ISO-2 code; N.B. cross-reference with contact matrix above
- data_end: 2026-01-25  # Last day in data
- data_days: 880        # Length of data for fitting
+ data_end: 2027-08-29  # Last day in data (end of RespiCompass 2026/27 reference season)
+ data_days: 363        # Length of data for fitting (~one season; data_start = 2026-09-01)
  data_burn_in: 0       # Number of days to simulate before matching to data
  cases: "observed"            # data stream label
  hospital_admissions: "observed" # data stream label

@@ -16,8 +16,9 @@
 # ---- Simulation settings ----
 
 # Number of days to simulate
-# This must be at least the sum of the burn-in period and the fitting dates
-n_days: 1000
+# This must be at least the sum of the burn-in period and the fitting dates.
+# Covers the RespiCompass 2026/2027 modelling period (2026-09-01 to ~2028-06).
+n_days: 640
 
 # Transmission rate at baseline susceptibility (defined as oldest age group) and seasonal maximum
 beta_A: 0.012 # transmission rate
@@ -135,8 +136,8 @@ calibration_options:
  data_source:
     epi: "RESPICOMPASS"      # OPTIONS: 'RESPICOMPASS', 'USER-DEFINED'
  country: "IE"         # N.B. Cross-reference with contact matrix above
- data_end: 2026-01-25  # Last day in data
- data_days: 880        # Length of data for fitting
+ data_end: 2027-08-29  # Last day in data (end of RespiCompass 2026/27 reference season)
+ data_days: 363        # Length of data for fitting (~one season; data_start = 2026-09-01)
  data_burn_in: 0       # Number of days to simulate before matching to data
  cases: "observed"     # data stream label
  hospital_admissions: "observed" # data stream label

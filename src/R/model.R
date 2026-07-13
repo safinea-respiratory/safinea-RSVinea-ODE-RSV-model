@@ -17,7 +17,9 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   
   # ---- Generate model parameters ----
   if (verbose != "none") message(" - Parsing input")
-  data = fit$data
+  # Keep the fitting dates locally, then strip the (large) calibration data and
+  # dates off `fit` before it is passed to parse_yaml()/apply_fit(), which only
+  # need the fitted parameter values, not the data itself.
   dates_df = fit$dates_model
   fit$data = NULL
   fit$dates_model = NULL
@@ -66,10 +68,13 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
     filter(iso2_code == country_iso2) %>%
     pull(country)
 
-  # Load the population data and adjust the group size
+  # Load the population data (RespiCompass uses ISO-2 country codes) and adjust
+  # the group sizes. Relabel to the full country name so redistribute_population
+  # (which filters on that name) matches and the output carries a readable label.
   population_github_df = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM") %>%
-    filter(country == country_name) %>%
-    remap_age_groups(o$respicompass_age_map) 
+    filter(country == country_iso2) %>%
+    mutate(country = country_name) %>%
+    remap_age_groups(o$respicompass_age_map)
   # Adjust the population group sizes assuming uniform distribution (taking into account the age band width)
   p$population <- redistribute_population(
     coarse_df = population_github_df,
@@ -77,15 +82,50 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
     fine_age_breaks = p$age_breaks,
     country_name = country_name
   )
-  
+
+  # Monthly births for this country (RespiCompass births use ISO-2 codes)
   p$births = o$births %>%
-    filter(country == country_name) 
-  
-  # The burden data loaded in load_data.R is already filtered to the configured
-  # country, so we only need to select the 4-weekly frequency here.
-  p$burden = data %>%
-    filter(data_freq == "4-weekly")
-  
+    filter(country == country_iso2)
+
+  # ---- Background mortality (Option A: data-derived) ----
+  # Convert RespiCompass annual death counts to a per-capita rate over the
+  # redistributed population. Falls back to the yaml background_mortality_rate
+  # override if the country is absent from the mortality data.
+  mort_rate = compute_background_mortality(
+    mortality_df    = o$mortality,
+    population_fine = p$population,
+    age_group_map   = p$age_group_map,
+    age_groups      = p$age_groups,
+    iso2            = country_iso2)
+  if (!is.null(mort_rate)) {
+    p$background_mortality_rate = unname(mort_rate)
+  } else {
+    message("  > No RespiCompass mortality data for ", country_iso2,
+            "; using yaml background_mortality_rate override.")
+  }
+
+  # age_relativity() derives the infant burden ratios AND the older-adult
+  # p_hosp shape from the RespiCompass age-stratified burden (o$burden). A
+  # USER-DEFINED data source supplies its own calibration data but its burden is
+  # NOT wired into this path, so it would silently get RespiCompass/literature
+  # severity-by-age. Fail loudly until user-supplied burden is implemented here.
+  if (toupper(p$calibration_options$data_source$epi) == "USER-DEFINED")
+    stop("age_relativity() sources the age-specific hospitalisation burden from ",
+         "RespiCompass (o$burden); a USER-DEFINED data source is not yet ",
+         "supported for the burden-driven p_hosp-by-age shape. Use a RespiCompass ",
+         "data source, or wire p$burden from the user data before age_relativity().")
+
+  # Age-stratified RSV burden for age_relativity()'s p_hosp-by-age ratios.
+  # Uses the seasonal totals (one value per age band) with a real season date
+  # so age_relativity() can derive the season_year. Kept separate from the
+  # calibration burden target (data_freq = "total"; see load_data.R).
+  p$burden = o$burden %>%
+    filter(country == country_name) %>%
+    remap_age_groups(o$respicompass_age_map) %>%
+    transmute(age_group,
+              value = total_rsv_hospitalisations,
+              date  = format_date(start_date))
+
   # Account for relative susceptibility, hospitalisation and mortality rates by age
   p = age_relativity(p)
 
@@ -140,6 +180,10 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   #
   # E0v / I0v track infants infected while in V0 (for infant VE-against-severity).
   # E1v–E3v / I1v–I3v track adults infected while in any V_k stage (same purpose).
+  #
+  # n_doses is a cumulative counter (not a living compartment): the ageing event
+  # adds every vaccine dose administered (infant routine + catch-up + adult
+  # campaign) by age group. Like D*, it is not aged and not subject to mortality.
   p$compartments = c(
     "V0",
     paste0("V1_", seq_len(p$W)),   # adult waning chain, tier 1
@@ -150,7 +194,8 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
     "I0", "I0v", "I1", "I1v", "I2", "I2v", "I3", "I3v",
     "H0", "H1", "H2", "H3",
     "R0", "R1", "R2", "R3",
-    "D0", "D1", "D2", "D3"
+    "D0", "D1", "D2", "D3",
+    "n_doses"
   )
   
   # Seed the initial infection
@@ -276,7 +321,7 @@ rsv_model = function(t, y, p){
   # actual population as births, ageing and background mortality change it over
   # time. At t=0 this equals the initial population (S+E+I+R), so there is no
   # discontinuity relative to the previous fixed-denominator formulation.
-  living_cols <- setdiff(p$compartments, c("D0", "D1", "D2", "D3"))
+  living_cols <- setdiff(p$compartments, c("D0", "D1", "D2", "D3", "n_doses"))
   N_living    <- rowSums(states[living_cols])
 
   with(states, {
@@ -464,9 +509,13 @@ rsv_model = function(t, y, p){
              (1 - p$p_death) * (1/p$delta) * H3 - (1/p$omega_4) * R3
     dD3  <-  p$p_death * (1/p$mu) * H3
 
+    # Cumulative doses do not change in continuous time — they are incremented
+    # discretely by the ageing event at each vaccination campaign.
+    dn_doses <- rep(0, p$n_age)
+
     # Combine derivatives into a named vector.
     # The loop finds dV0, dV1_1..dV1_W, dV2_1..dV2_W, dV3_1..dV3_W,
-    # dS0..dD3, dE0v..dI3v via get() in the current environment.
+    # dS0..dD3, dE0v..dI3v, dn_doses via get() in the current environment.
     derivatives <- matrix(0, p$n_age, length(extract_states))
     for (i_state in seq_along(extract_states)) {
       derivatives[, i_state] <- get(paste0("d", extract_states[i_state]))
@@ -526,6 +575,8 @@ rsv_model = function(t, y, p){
 #    c. Adult campaign: on each adult_vaccination_dates, a fraction
 #       adult_vacc_coverage of S1/S2/S3 in adult_vaccination_agegroups
 #       is moved into V1_1/V2_1/V3_1 (entering the waning chain at stage 1).
+#    Every dose administered (a + b + c) is added to the cumulative n_doses
+#    counter by age group.
 #
 # 4. BACKGROUND (NON-RSV) MORTALITY: every living compartment is scaled by an
 #    age-specific monthly survival factor. This is the demographic outflow
@@ -533,8 +584,9 @@ rsv_model = function(t, y, p){
 #    bound. Background deaths leave the model entirely — they are NOT added to
 #    the RSV-death compartments (D0-D3), which track only RSV mortality.
 #
-# Note: D* compartments are not age-shifted, so cumulative RSV deaths retain
-# the age group at time of death.
+# Note: the cumulative counters D0-D3 (RSV deaths) and n_doses (doses given) are
+# not age-shifted and not subject to mortality, so they retain the age group at
+# the time of the event.
 ageing_event <- function(t, y, parms) {
 
   # Extract names and split into prefix and age group
@@ -567,10 +619,11 @@ ageing_event <- function(t, y, parms) {
 
   for (pref in unique(prefixes)) {
 
-    # Cumulative RSV-death compartments are frozen: deaths (D) retain the age group
-    # at time of death, so they are neither age-shifted nor birth-replenished.
-    # (Consistent with step 4, which also excludes D0-D3 from mortality.)
-    if (pref %in% c("D0", "D1", "D2", "D3")) next
+    # Cumulative counters are frozen: RSV deaths (D) retain the age group at time
+    # of death, and n_doses retains the age at vaccination — so they are neither
+    # age-shifted nor birth-replenished. (Consistent with step 4, which also
+    # excludes them from mortality.)
+    if (pref %in% c("D0", "D1", "D2", "D3", "n_doses")) next
 
     idx <- which(prefixes == pref)
 
@@ -599,6 +652,10 @@ ageing_event <- function(t, y, parms) {
     }
   }
 
+  # Count infant routine doses: newborns vaccinated at birth this month.
+  idx_nd_birth <- which(prefixes == "n_doses" & age_labels == "0-1m")
+  new_y[idx_nd_birth] <- new_y[idx_nd_birth] + births_val * infant_vacc_coverage
+
   # ---- 2. Adult V-stage waning advancement ----
   # Advance each tier's waning chain by one month. 
   # Note: this is NOT an aging event but accountaing of "vaccine age" (time since vaccination)
@@ -625,14 +682,19 @@ ageing_event <- function(t, y, parms) {
     new_y2  <- new_y
     ind_S0  <- which(age_labels %in% parms$infant_vaccination_catch_up_agegroup & prefixes == "S0")
     ind_V0  <- which(age_labels %in% parms$infant_vaccination_catch_up_agegroup & prefixes == "V0")
-    new_y[ind_S0] <- new_y2[ind_S0] * (1 - parms$infant_vaccination_catch_up_coverage)
-    new_y[ind_V0] <- new_y[ind_V0]  + new_y2[ind_S0] * parms$infant_vaccination_catch_up_coverage
+    ind_nd  <- which(age_labels %in% parms$infant_vaccination_catch_up_agegroup & prefixes == "n_doses")
+    doses_cu      <- new_y2[ind_S0] * parms$infant_vaccination_catch_up_coverage
+    new_y[ind_S0] <- new_y2[ind_S0] - doses_cu
+    new_y[ind_V0] <- new_y[ind_V0]  + doses_cu
+    new_y[ind_nd] <- new_y[ind_nd]  + doses_cu  # count catch-up doses
   }
 
   # ---- 3b. Adult vaccination campaign ----
   # On each campaign date, move adult_vacc_coverage fraction of S1/S2/S3
   # in the eligible age groups into V1_1/V2_1/V3_1 (waning chain stage 1).
   if (any(current_date == ymd(parms$adult_vaccination_dates))) {
+    idx_nd_ad <- which(prefixes == "n_doses" &
+                       age_labels %in% parms$adult_vaccination_agegroups)
     for (k in 1:3) {
       idx_Sk  <- which(prefixes == paste0("S", k) &
                        age_labels %in% parms$adult_vaccination_agegroups)
@@ -641,21 +703,26 @@ ageing_event <- function(t, y, parms) {
       to_vacc          <- new_y[idx_Sk] * parms$adult_vacc_coverage
       new_y[idx_Sk]    <- new_y[idx_Sk]  - to_vacc
       new_y[idx_Vk1]   <- new_y[idx_Vk1] + to_vacc
+      new_y[idx_nd_ad] <- new_y[idx_nd_ad] + to_vacc  # count adult doses (summed over tiers)
     }
   }
 
   # ---- 4. Background (non-RSV) mortality ----
   # Apply age-specific all-cause mortality as a discrete monthly step. The
-  # configured background_mortality_rate is an ANNUAL per-capita RATE (hazard),
-  # so the exact monthly survival for a constant hazard is exp(-rate/12); this
-  # compounds to an annual survival of exp(-rate). (If values were instead an
-  # annual PROBABILITY q_x, the correct factor would be (1 - q_x)^(1/12) — see
-  # the units disclaimer in default.yaml.) Applied to every living compartment;
-  # D0-D3 (cumulative RSV deaths) are excluded so background deaths do not
-  # contaminate the RSV-death metric.
+  # background_mortality_rate (data-derived from RespiCompass at setup, or the
+  # yaml fallback) is an ANNUAL per-capita RATE (hazard), so the exact monthly
+  # survival for a constant hazard is exp(-rate/12); this compounds to an annual
+  # survival of exp(-rate). (If values were instead an annual PROBABILITY q_x,
+  # the correct factor would be (1 - q_x)^(1/12) — see the units disclaimer in
+  # default.yaml.) Applied to every living compartment; D0-D3 (cumulative RSV
+  # deaths) are excluded so background deaths do not contaminate the RSV metric.
+  #
+  # ASSUMPTION / LIMITATION: the annual rate is spread UNIFORMLY across the 12
+  # months (flat monthly rate). Seasonal variation in all-cause mortality
+  # (higher in winter) is not modelled here.
   mort_rate_annual <- setNames(unlist(parms$background_mortality_rate), parms$age_groups)
   survival_month   <- exp(-mort_rate_annual[age_labels] / 12)
-  is_living        <- !(prefixes %in% c("D0", "D1", "D2", "D3"))
+  is_living        <- !(prefixes %in% c("D0", "D1", "D2", "D3", "n_doses"))
   new_y[is_living] <- new_y[is_living] * survival_month[is_living]
 
   return(new_y)
@@ -975,8 +1042,25 @@ format_output = function(out_df, p) {
               .groups = "drop") %>%
     mutate(metric = "vaccinated",
            variant = NA_character_) # Deceased compartment not disaggregated by variant
-  
-  
+
+  #---- Doses administered (cumulative) ----
+  # Cumulative vaccine doses (infant routine + infant catch-up + adult campaign),
+  # incremented by the ageing event. Difference over time for doses per period.
+  ndoses_cols = c(outer("n_doses_", p$age_groups, paste0)) %>%
+    as.vector()
+
+  ndoses_df = out_df %>% pivot_longer(cols = all_of(ndoses_cols),
+                                      names_to = "compartment",
+                                      values_to = "val") %>%
+    mutate(age_group = sub(".*_", "", compartment),
+           age_group = factor(age_group, levels = p$age_groups)) %>%
+    group_by(time, age_group) %>%
+    summarise(value = sum(val),
+              .groups = "drop") %>%
+    mutate(metric = "n_doses",
+           variant = NA_character_) # Doses not disaggregated by variant
+
+
   #---- Deaths ----
   # Select death columns
   death_cols = c(outer("deaths_", p$age_groups, paste0)) %>%
@@ -1016,6 +1100,7 @@ format_output = function(out_df, p) {
                 R_df,
                 D_df,
                 V_df,
+                ndoses_df,
                 deaths_df,
                 seasonality)
   
@@ -1057,10 +1142,12 @@ age_relativity = function(p){
     group_by(larger_group) %>%
     slice(1) %>% # Keep just 'larger groups'
     ungroup() %>%         
-    # Read in relative susceptibility by age group 
-    mutate(susceptibility = case_when(larger_group %in% c("0-1m", "1-2m", "2-3m") ~ p$rel_sus_a,
-                                      larger_group %in% c("3-4m", "4-5m", "5-6m") ~ p$rel_sus_b,
-                                      larger_group %in% c("60-64y", "65-69y", "70-74y", "75-79y", "80+y") ~ p$rel_sus_c,
+    # Read in relative susceptibility by age group. NB larger_group holds the
+    # REPORTING bands (age_group_map values), so match those, not fine labels:
+    # rel_sus_a -> 0-3m (highest maternal immunity), rel_sus_b -> 3-6m (waning).
+    mutate(susceptibility = case_when(larger_group %in% c("0-3m") ~ p$rel_sus_a,
+                                      larger_group %in% c("3-6m") ~ p$rel_sus_b,
+                                      larger_group %in% c("60-65y", "65-70y", "70-75y", "75-80y", "80+y") ~ p$rel_sus_c,
                                       TRUE ~ susceptibility)) %>%
     # Map susceptibility to smaller age groups
     right_join(p$age_group_map, by = "larger_group") %>%
@@ -1105,6 +1192,42 @@ age_relativity = function(p){
               "(no relative adjustment).")
       burden_wide[[band]] = 0
     }
+  }
+
+  # ---- Elderly p_hosp shape (data-derived, population-normalised) ----
+  # Relative hospitalisation risk across the older-adult bands, derived from the
+  # observed burden DIVIDED BY population per band (a hospitalisation RATE), then
+  # normalised to 60-64y = 1.0. Unlike the infant bands (similar sizes), the
+  # elderly 5-year bands have very different populations, so we must normalise by
+  # population, not use raw burden ratios. This shape multiplies rel_hosp_c_A (the
+  # calibratable elderly amplitude anchored at 60-64y) in compute_p_hosp_A_row().
+  # If burden data is degenerate/missing, fall back to a literature gradient
+  # (Spain population cohort & US RSV-NET: ~2-3-4-6 fold at 70/75/80/85 vs 60-64).
+  elderly_bands <- c("60-65y", "65-70y", "70-75y", "75-80y", "80+y")
+  elderly_shape_fallback <- setNames(c(1.0, 1.5, 2.0, 3.0, 4.5), elderly_bands)
+
+  # Population per reporting band (fixed across seasons)
+  pop_band_v <- p$population %>%
+    left_join(p$age_group_map, by = c("age_group" = "smaller_group")) %>%
+    group_by(larger_group) %>%
+    summarise(pop = sum(population), .groups = "drop") %>%
+    { setNames(.$pop, .$larger_group) }
+
+  # Pooled elderly burden across seasons, then rate = burden / population
+  eld_present <- all(elderly_bands %in% names(burden_wide)) &&
+                 all(elderly_bands %in% names(pop_band_v))
+  if (eld_present) {
+    eld_burden <- sapply(elderly_bands, function(b) sum(burden_wide[[b]], na.rm = TRUE))
+    eld_rate   <- eld_burden / pop_band_v[elderly_bands]
+  } else {
+    eld_rate <- NA_real_
+  }
+  if (!eld_present || any(!is.finite(eld_rate)) || eld_rate[1] <= 0) {
+    warning("age_relativity(): elderly burden/population degenerate or missing; ",
+            "using literature fallback shape (1.0/1.5/2.0/3.0/4.5).")
+    elderly_shape <- elderly_shape_fallback
+  } else {
+    elderly_shape <- setNames(as.numeric(eld_rate / eld_rate[1]), elderly_bands)
   }
 
   # Per-season ratios
@@ -1168,13 +1291,17 @@ age_relativity = function(p){
       # on every call, so calibration is not reproducible for the same fit.
       # Either make this deterministic (use mean = 0.25) or route through
       # the yaml `uncertainty:` block so the draw is logged and seeded.
-      mutate(p_hosp_A = case_when(
+      # Elderly bands get rel_hosp_c_A (calibratable amplitude, anchored at
+      # 60-64y = 1.0) times the data-derived population-normalised shape.
+      mutate(eld_mult = unname(elderly_shape[larger_group]),
+             p_hosp_A = case_when(
         larger_group %in% c("0-3m")  ~ p_hosp_A * p$rel_hosp_a_A,
         larger_group %in% c("3-6m")  ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0.25, 0.03)) / ratio1,
         larger_group %in% c("6-12m") ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0.25, 0.03)) / ratio2,
         larger_group %in% c("1-5y")  ~ p_hosp_A * p$rel_hosp_b_A,
-        larger_group %in% c("65+y")  ~ p_hosp_A * p$rel_hosp_c_A,
+        !is.na(eld_mult)             ~ p_hosp_A * p$rel_hosp_c_A * eld_mult,
         TRUE ~ p_hosp_A)) %>%
+      select(-eld_mult) %>%
       # Map hospitalisation risk back to fine age groups
       right_join(p$age_group_map, by = "larger_group") %>%
       rename(age_group = smaller_group) %>%
@@ -1249,7 +1376,7 @@ age_relativity = function(p){
     # Read in relative mortality risk  by age group
     mutate(p_death = case_when(larger_group %in% c("0-3m") ~ p_death * p$rel_death_a,
                                larger_group %in% c("3-6m") ~ p_death * p$rel_death_b,
-                               larger_group %in% c("65+y") ~ p_death * p$rel_death_c,
+                               larger_group %in% c("60-65y", "65-70y", "70-75y", "75-80y", "80+y") ~ p_death * p$rel_death_c,
                                TRUE ~ p_death)) %>%
     # Map mortality risk to smaller age groups
     right_join(p$age_group_map, by = "larger_group") %>%

@@ -412,3 +412,63 @@ redistribute_population <- function(coarse_df, fine_age_groups, fine_age_breaks,
   return( bind_rows(redistributed) )
 }
 
+
+# ------------------------------------------------------------------ -
+# Derive age-specific background mortality RATE from RespiCompass counts ----
+# ------------------------------------------------------------------ -
+# RespiCompass provides annual all-cause DEATH COUNTS by (coarse) age band.
+# We convert these to a per-capita annual RATE (deaths / population) and map the
+# rate onto the model's fine age groups. The denominator comes from the model's
+# already-redistributed fine population, summed back up to the mortality bands,
+# so numerator and denominator are internally consistent.
+#
+# ASSUMPTION / LIMITATION: a single annual rate per band is applied uniformly
+# across the year (see the flat monthly-rate note in ageing_event()); RespiCompass
+# also ships mortality_month.csv (seasonal share) which is NOT used here.
+#
+# Returns a named numeric vector (one annual rate per fine age group), or NULL
+# if the country is absent from the mortality data (caller then falls back to
+# the yaml `background_mortality_rate` override).
+compute_background_mortality <- function(mortality_df, population_fine,
+                                         age_group_map, age_groups, iso2) {
+
+  # Deaths for this country, keyed by RespiCompass mortality band. Guard against
+  # multiple reference years by keeping only the most recent.
+  mort <- mortality_df %>% filter(iso2_code == iso2)
+  if (nrow(mort) == 0) return(NULL)
+  if ("reference_year" %in% names(mort))
+    mort <- mort %>% filter(reference_year == max(reference_year))
+  deaths_band <- setNames(mort$total_deaths, mort$age_group)
+
+  # RSVinea reporting bands -> RespiCompass mortality bands.
+  # (All infant reporting bands collapse into the single '<1' mortality band.)
+  # Keys are the RSVinea reporting bands (age_group_map values); values are the
+  # raw RespiCompass mortality-file band labels.
+  reporting_to_mortality <- c(
+    "0-3m"   = "<1",    "3-6m"  = "<1",    "6-12m" = "<1",
+    "1-5y"   = "1-4",   "5-18y" = "5-17",
+    "18-60y" = "18-59", "60-65y" = "60-64", "65-70y" = "65-69",
+    "70-75y" = "70-74", "75-80y" = "75-79", "80+y"  = "80+"
+  )
+
+  # Fine age group -> reporting band -> mortality band (length n_age, ordered)
+  fine_to_reporting <- setNames(age_group_map$larger_group, age_group_map$smaller_group)
+  band_of_age <- unname(reporting_to_mortality[fine_to_reporting[age_groups]])
+
+  # Population per mortality band = sum of fine populations falling in the band
+  pop_fine <- setNames(population_fine$population, population_fine$age_group)
+  pop_band <- tapply(pop_fine[age_groups], band_of_age, sum)
+
+  # Annual per-capita rate per band, then broadcast back to the fine age groups
+  rate_band <- deaths_band[names(pop_band)] / pop_band
+  rate_fine <- unname(rate_band[band_of_age])
+  names(rate_fine) <- age_groups
+
+  if (any(is.na(rate_fine)))
+    warning("compute_background_mortality(): NA rate for age group(s): ",
+            paste(age_groups[is.na(rate_fine)], collapse = ", "),
+            " (country ", iso2, "). Check mortality-band coverage.")
+
+  return(rate_fine)
+}
+

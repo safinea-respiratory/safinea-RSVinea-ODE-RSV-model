@@ -38,41 +38,52 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$countries_url = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/supporting-files/countries.csv"
   o$countries_df  = read.csv(o$countries_url)
 
-  # Population data link (RespiCompass per-country age-band estimates).
-  # NB: RespiCompass archived the 2025/2026 round-1 auxiliary data under
-  # Previous_Rounds/ when the round closed (2026-06-12), so this points there.
-  # Update the round path if adapting to a newer RespiCompass round.
-  o$pop_url = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/population/population_estimates.csv"
-  
-  # Data on births
-  o$births_url = "data/population/monthly_births.csv"
-  
+  # ---- RespiCompass 2026/2027 RSV round-1 data ----
+  # This round targets novel RSV immunisation strategies for older adults
+  # NB: population/births/mortality use ISO-2 country codes; the target hospital
+  # files use full country names. See load_data.R / model.R for the keying.
+  respicompass_raw = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/"
+
+  # Population by age band and country (ISO-2 country column)
+  o$pop_url = paste0(respicompass_raw, "auxiliary-data/population/population_estimates.csv")
+
+  # Monthly live births by country (ISO-2), covering the modelling period
+  o$births_url = paste0(respicompass_raw, "auxiliary-data/births/births_by_month.csv")
+
+  # All-cause mortality: annual DEATH COUNTS by age band and country (ISO-2).
+  # Converted to a per-capita rate at model setup (deaths / population); see
+  # compute_background_mortality() in auxiliary.R.
+  o$mortality_url = paste0(respicompass_raw, "auxiliary-data/mortality/mortality_agegroups.csv")
+
   o$vaccine_url = NULL
-  
-  # RespiCompass data links
+
+  # RespiCompass target (observed) data links (full country-name column)
   o$respicompass =
-    list(hospital_admissions  = "data/epidemiological/RSV_weekly_counts.csv",
-         hospital_burden_agegroups = "data/epidemiological/RSV_monthly_prop_age.csv")
+    list(hospital_admissions       = paste0(respicompass_raw, "target-data/hospitaladmissions.csv"),
+         hospital_burden_agegroups = paste0(respicompass_raw, "target-data/hospitalburden_agegroups.csv"))
 
   o$contact_matrices = paste0(o$pth$data_contact, "/contact_all.rdata")
 
   # ---- General data ----
-  births_df = read.csv(o$births_url, fileEncoding = "UTF-8-BOM") %>%
-    mutate(date = make_date(
-      year  = as.integer(TIME_PERIOD),
-      month = match(month, month.name),
-      day   = 1),
-      country = geo,
-      births = OBS_VALUE
-    ) %>%
+  # Monthly births (real counts). RespiCompass supplies only the reference
+  # season (2026-09 to 2027-08), but the modelling period spans two seasons, so
+  # repeat the same monthly births forward one year to populate newborns in the
+  # 2027/28 season (assumes births are stable year-to-year). Country is ISO-2.
+  births_ref = read.csv(o$births_url, fileEncoding = "UTF-8-BOM") %>%
+    mutate(date = ymd(date)) %>%
     select(country, date, births) %>%
-    filter(!is.na(date), date < ymd("2024-01-01")) %>%
-    setDT() 
-  df_2024 = births_df %>% filter(year(date) == "2023") %>% mutate(date = date + years(1))
-  df_2025 = births_df %>% filter(year(date) == "2023") %>% mutate(date = date + years(2))
-  df_2026 = births_df %>% filter(year(date) == "2023") %>% mutate(date = date + years(3))
-  
-  o$births = bind_rows(births_df, df_2024, df_2025, df_2026) %>% arrange(country, date)
+    filter(!is.na(date)) %>%
+    setDT()
+  o$births = bind_rows(births_ref,
+                       births_ref %>% mutate(date = date %m+% years(1))) %>%
+    arrange(country, date) %>%
+    setDT()
+
+  # Raw all-cause death counts by age band (used to derive mortality rates).
+  o$mortality = read.csv(o$mortality_url, fileEncoding = "UTF-8-BOM")
+
+  # Age-stratified RSV hospital burden (seasonal totals per age group), kept
+  # separately here as the source for age_relativity()'s p_hosp-by-age ratios.
   o$burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
   
   
@@ -100,11 +111,11 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$quantiles = c(0.05, 0.95)
   
   # ---- Plotting settings ----
-  # Start date for plotting
-  o$plot_start_date = "2023-09-01"
-  
-  # Zoom in start date for plotting
-  o$plot_zoom_date = "2026-07-01"
+  # Start date for plotting (RespiCompass 2026/2027 round modelling period)
+  o$plot_start_date = "2026-09-01"
+
+  # Zoom in start date for plotting (start of the 2027/28 season)
+  o$plot_zoom_date = "2027-09-01"
   
   # Days of model output to include in fitting
   o$plot_from = 1

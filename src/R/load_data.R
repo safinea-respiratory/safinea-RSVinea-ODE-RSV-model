@@ -40,7 +40,7 @@ load_epi = function(o, opts, fit) {
   # Get population size by age group
   if(!is.null(opts$country_name)){
     pop_data = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM") %>%
-      filter(country == opts$country_name) %>%
+      filter(country == opts$country) %>%    # RespiCompass population uses ISO-2 codes
       remap_age_groups(o$respicompass_age_map)
   } else {message("No population data needed for user-defined analysis")}
   
@@ -55,27 +55,20 @@ load_epi = function(o, opts, fit) {
   
   if (opts$data_source$epi == "RESPICOMPASS") {
 
-    # --- weekly hospital admissions (only total age group) --- #
-    # Load raw hospital admissions data from RespiCompass
+    # --- Weekly hospital admissions (total, all ages) --- #
+    # RespiCompass target-data uses full country names and reports the ISO-week
+    # Sunday directly in `target_end_date`, so no +6 shift or ISO-2 remap needed.
     raw_data = read.csv(o$respicompass$hospital_admissions, fileEncoding = "UTF-8-BOM")
-    
-    # Map to connect country name with country ISO2
-    country_map = read.csv("https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/supporting-files/countries.csv")
-    
-    # Select only columns of interest and convert dates to R-interpretable
+
     data_hosp_admissions = raw_data %>%
-      mutate(date  = as.Date(date_wk_floor) + 6,
-             value = case_counts,
-             country = opts$country_name) %>%
-      select(date, country, value) %>%
-      left_join(country_map, by=c("country")) %>%
-      filter(iso2_code == opts$country) %>%
-      select(-country, -iso2_code) %>%
+      filter(country == opts$country_name) %>%
+      transmute(date  = as.Date(target_end_date),
+                value = weekly_rsv_hospitalisations) %>%
       mutate(date = format_date(date),
              metric = "hospital_admissions",
              age_group = "total",
              data_freq = "weekly") %>%
-      # Keep only dates of interest 
+      # Keep only dates of interest
       right_join(y  = dates_df,
                  by = "date") %>%
       arrange(date) %>%
@@ -83,80 +76,45 @@ load_epi = function(o, opts, fit) {
       # Summarise time period if desired...
       change_time_period(dates_df, opts$data_period) %>%
       setDT()
-    
+
     # Throw warning if no hospital data for this country
     if (nrow(data_hosp_admissions) == 0) {
-      warning("No RespiCompass hospital data found for country ", opts$country)
+      warning("No RespiCompass hospital admissions found for country ", opts$country)
     }
-    
-    
-    # --- Total hospital burden (admissions) for each age group --- #
-    # Load raw total hospital admissions data from RespiCompass
-    raw_data = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
-    
-    # Compute "Weekly totals -> 4-week totals" to be used to estimate values per age group below
-    periods <- raw_data %>%               # your 2nd dataframe
-      distinct(date_28days_floor) %>%
-      mutate(
-        period_start = as.Date(date_28days_floor) + 6,
-        period_end   = as.Date(date_28days_floor) + 6 + weeks(4)
-      )
-    weekly_4wk <- data_hosp_admissions %>%
-      crossing(periods) %>%
-      filter(date >= period_start & date < period_end) %>%
-      group_by(period_start) %>%
-      summarise(
-        total_4wk = sum(value, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      rename(date = period_start)
-    
-    # Select only columns of interest
-    data_hosp_burden = raw_data %>%
-      mutate(date = as.Date(date_28days_floor) + 6,
-             age_group = age_gp_modelling,
-             value = NA,
-             country = opts$country_name) %>%
-      select(country, date, age_group, value, proportion) %>%
-      left_join(country_map, by=c("country")) %>%
-      filter(iso2_code == opts$country) %>%
-      select(-country, -iso2_code) %>%
-      mutate(date = format_date(date),
-             metric = "hospital_admissions",
-             data_freq = "4-weekly") %>%
-      # From proportions to value
-      left_join(weekly_4wk, by = "date") %>%
-      mutate(
-        value = total_4wk * proportion
-      ) %>%
-      filter(!is.na(value)) %>%
-      # Change age group names
-      mutate(age_group = case_when(age_group  == "< 3 months" ~ "0-3m",
-                                   age_group  == "3-5 months" ~ "3-6m",
-                                   age_group  == "6-11 months" ~ "6-12m",
-                                   age_group  == "1-4 years" ~ "1-5y",
-                                   age_group  == "5-64 years" ~ "5-65y",
-                                   age_group == "65+ years" ~ "65+y",
-                                   TRUE ~ age_group)) %>%
-      select(date, age_group, value, metric, data_freq) %>%
+
+
+    # --- Age-stratified hospital burden (seasonal totals per age group) --- #
+    # This round provides a single seasonal total per age band (not a 4-weekly
+    # proportion series). We tag it data_freq = "total" with date = NA so it
+    # matches the model's per-age 'total' aggregation in aggregate_model_output().
+    # Age bands are remapped to the model's reporting-band labels so they align
+    # with the model-output grouping in fitting_format().
+    raw_burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
+
+    data_hosp_burden = raw_burden %>%
+      filter(country == opts$country_name) %>%
+      remap_age_groups(o$respicompass_age_map) %>%
+      transmute(date      = as.Date(NA),
+                age_group,
+                value     = total_rsv_hospitalisations,
+                metric    = "hospital_admissions",
+                data_freq = "total") %>%
       setDT()
-    
-    # Throw warning if no hospital data for this country
+
+    # Throw warning if no burden data for this country
     if (nrow(data_hosp_burden) == 0){
-      warning("No RespiCompass hospital data found for country ", opts$country)
+      warning("No RespiCompass hospital burden found for country ", opts$country)
     }
-    
-    
-    
-    # Filter dates of interest for fitting and plotting
+
+    # Combine admissions (weekly) and burden (seasonal totals per age group)
     combine_df = bind_rows(data_hosp_admissions, data_hosp_burden)
     fit$data = combine_df
-    
+
     # Check no data is negative
-    if (any(fit$data$value < 0)){
+    if (any(fit$data$value < 0, na.rm = TRUE)){
       stop("Negative data values identified")
     }
-    
+
     return(fit)
   }
   

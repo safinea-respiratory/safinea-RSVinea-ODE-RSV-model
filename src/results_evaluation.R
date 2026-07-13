@@ -2,13 +2,24 @@
 # RESULTS EVALUATION
 #
 # Post-hoc evaluation of RSVinea model output for the
-# RespiCompass 2025/2026 submission round.
+# RespiCompass RSV submission round.
 #
 # Loads scenario outputs produced by run_scenarios() and
 # formats them for RespiCompass submission, then generates
 # comparative plots against the static model and observed data.
 #
 # Run after launch.R has completed.
+#
+# !!! ROUND TRANSITION — 2026/2027 !!!
+# The model, auxiliary data and target data have been moved to the RespiCompass
+# 2026/2027 round (older-adult RSV immunisation). Data connections below have
+# been repointed accordingly. HOWEVER, the hub submission schema (hub-config/
+# tasks.json) on `main` still describes the 2025/2026 round (round_id
+# "2025_2026_1_RSV", pop_groups 5-64y/65+y, scenarios A-E, target dates
+# 2025-09-07..2026-05-31, horizon 0-38). The 2026/2027 submission spec is NOT
+# yet published, so the submission-format block and the static-model comparison
+# below remain PROVISIONAL — see the FIXME banners. Update them once the hub
+# publishes the new tasks.json.
 #
 # STATIC MODEL COMPARISON
 # The second half of this script compares results against the
@@ -30,22 +41,22 @@ rm(list = ls())
 # Load all required packages and functions
 source("R/dependencies.R")
 
-# Load country list
-country_list = read.csv("https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/supporting-files/countries.csv")
-pop_df = read.csv("https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/population/population_estimates.csv")
-burden_df = read.csv("data/epidemiological/RSV_monthly_prop_age.csv")
+# Load results for the configured country
+country_code = "IE"
+
+# Set options first (defines the RespiCompass data URLs, paths, and o$countries_df)
+o = set_options(do_step = c(1:3), analysis_name = country_code)
+
+# RespiCompass reference data for the current (2026/2027) round; see options.R.
+# NB: the population file's `country` column is the ISO-2 code.
+country_list = o$countries_df
+pop_df = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM")
 
 # Age group mapping — read from default.yaml (single source of truth)
 age_group_map = age_group_map_df(o)
 
 # Define metrics to show
 metric_levels = c("hospital_admissions", "cases")
-
-# Load results for the configured country
-country_code = "IE"
-
-# Set options
-o = set_options(do_step = c(1:3), analysis_name = country_code)
 
 # Collate and interpret inputs so we know what to plot
 #list[f, baseline] = fig_properties(o, list(...))
@@ -137,22 +148,31 @@ results_all_df_output = results_df
 
 
 ### --- Prepare file for submission
+#
+# FIXME (2026/2027): the constants below still target the 2025/2026 hub schema
+# (round_id, horizon origin 2025-09-07, horizon<39, and the model->submission
+# age-band relabelling). The 2026/2027 tasks.json is not yet published; the
+# expected pop_group bands (per the round's target age groups) are
+# 0-2mo/3-5mo/6-11mo/1-4/5-17/18-59/60-64/65-69/70-74/75-79/80+, and the horizon
+# origin / round_id will change. Revisit once the hub publishes the new schema.
 
 respiCompass_df_submission_pre = results_all_df_output %>%
   mutate(target = ifelse(metric=="hospital_admissions", "rsv_hospitalisations",
                          ifelse(metric=="cases","rsv_infections", metric))) %>%
-  # Rename age groups
-  mutate(age_group = case_when(age_group  == "0-3m" ~ "0-2mo",
-                               age_group  == "3-6m" ~ "3-5mo",
+  # Rename model reporting bands (age_group_map values) to RespiCompass target
+  # band labels. FIXME(2026/2027): submission schema provisional; these outputs
+  # follow the target-data band conventions (0-2mo/.../1-4/5-17/18-59/.../80+).
+  mutate(age_group = case_when(age_group  == "0-3m"  ~ "0-2mo",
+                               age_group  == "3-6m"  ~ "3-5mo",
                                age_group  == "6-12m" ~ "6-11mo",
-                               age_group  == "1-5y" ~ "1-4y",
-                               age_group  == "5-18y"  ~ "5-18y",
-                               age_group  == "18-59y" ~ "18-59y",
-                               age_group  == "60-64y" ~ "60-64y",
-                               age_group  == "65-69y" ~ "65-69y",
-                               age_group  == "70-74y" ~ "70-74y",
-                               age_group  == "75-79y" ~ "75-79y",
-                               age_group  == "80+y"   ~ "80+y",
+                               age_group  == "1-5y"  ~ "1-4",
+                               age_group  == "5-18y" ~ "5-17",
+                               age_group  == "18-60y" ~ "18-59",
+                               age_group  == "60-65y" ~ "60-64",
+                               age_group  == "65-70y" ~ "65-69",
+                               age_group  == "70-75y" ~ "70-74",
+                               age_group  == "75-80y" ~ "75-79",
+                               age_group  == "80+y"   ~ "80+",
                                TRUE ~ age_group)) %>%
   #Rename baseline scenario
   mutate(scenario = as.character(scenario)) %>%
@@ -216,12 +236,12 @@ respiCompass_df_submission = respiCompass_df_submission_pre
 
 #### --- Plot infections over time
 
-# Pop data
-pop_df_total = pop_df %>% 
+# Pop data. In the RespiCompass population file the `country` column is already
+# the ISO-2 code, so it is the location key directly (no country_list join).
+pop_df_total = pop_df %>%
   group_by(country) %>%
-  summarise(population = sum(population)) %>% 
-  left_join(country_list) %>%
-  rename(location = iso2_code)
+  summarise(population = sum(population), .groups = "drop") %>%
+  rename(location = country)
 
 # Time plot 
 respiCompass_df_submission %>%
@@ -394,6 +414,18 @@ respiCompass_df_submission %>%
 #   (output/IRL_respiCompass_2025_2026_results_staticModel.parquet)
 #
 # This section is skipped automatically if the file is not present.
+#
+# !!! FIXME (2026/2027) — NEEDS A REDESIGN PASS !!!
+# This whole comparison section was built for the 2025/2026 round and does not
+# yet work end-to-end for 2026/2027. Known issues:
+#   1. Observed age-burden is now a SINGLE SEASONAL TOTAL per age band (not a
+#      4-weekly proportion series), so all "4-weekly burden over time" plots
+#      below are stale and must be re-cast as seasonal-total comparisons.
+#   2. The static-model parquet must be regenerated for the 2026/2027 round.
+# The observed-data READS just below are repointed to the new RespiCompass
+# target-data so the sources are correct, but the plot internals still assume
+# the old structure. (The submission block now maps model reporting bands to the
+# target band labels, so model and observed pop_group labels do line up.)
 ########################################################## #
 
 static_model_path <- "output/3_results/IRL_respiCompass_2025_2026_results_staticModel.parquet"
@@ -407,61 +439,31 @@ if (!file.exists(static_model_path)) {
   static_df_load <- read_parquet(static_model_path) %>%
     mutate(Model = "Static", target_end_date = as.Date(target_end_date))
   
-  ### LOAD DATA
-  # Load weekly data
-  hospital_admissions_df = read.csv("data/epidemiological/RSV_weekly_counts.csv") %>%
-    mutate(target_end_date = as.Date(date_wk_floor) + 6,
-           weekly_rsv_hospitalisations = case_counts) %>%
-    select(target_end_date, season_name, weekly_rsv_hospitalisations) %>%
+  ### LOAD OBSERVED DATA (RespiCompass target-data, current round)
+  # Full country name for filtering the target files (which use full names).
+  country_name = country_list$country[match(country_code, country_list$iso2_code)]
+
+  # Weekly admissions (total, all ages) — clean weekly time series.
+  hospital_admissions_df = read.csv(o$respicompass$hospital_admissions, fileEncoding = "UTF-8-BOM") %>%
+    filter(country == country_name) %>%
+    transmute(target_end_date = as.Date(target_end_date),
+              weekly_rsv_hospitalisations) %>%
     setDT()
-  # Load raw total hospital admissions data from RespiCompass
-  raw_data = read.csv("data/epidemiological/RSV_monthly_prop_age.csv", fileEncoding = "UTF-8-BOM")
-  # Compute "Weekly totals -> 4-week totals" to be used to estimate values per age group below
-  periods <- raw_data %>%               # your 2nd dataframe
-    distinct(date_28days_floor) %>%
-    mutate(
-      period_start = as.Date(date_28days_floor) + 6,
-      period_end   = as.Date(date_28days_floor) + 6 + weeks(3)
-    )
-  weekly_4wk <- hospital_admissions_df %>%
-    crossing(periods) %>%
-    filter(target_end_date >= period_start & target_end_date <= period_end) %>%
-    group_by(period_start) %>%
-    summarise(
-      total_4wk = sum(weekly_rsv_hospitalisations, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    rename(date = period_start)
-  
-  # Select only columns of interest
-  hospital_burden_df = raw_data %>%
-    mutate(date = as.Date(date_28days_floor) + 6,
-           age_group = age_gp_modelling,
-           value = NA) %>%
-    select(date, age_group, value, proportion) %>%
-    # From proportions to value
-    left_join(weekly_4wk, by = "date") %>%
-    mutate(
-      value = total_4wk * proportion,
-      burden_start_date = date,
-      burden_end_date = date + weeks(3),
-      total_rsv_hospitalisations = value
-    ) %>%
-    filter(!is.na(value)) %>%
-    # Change age group names
-    mutate(age_group = case_when(age_group  == "< 3 months" ~ "0-2mo",
-                                 age_group  == "3-5 months" ~ "3-5mo",
-                                 age_group  == "6-11 months" ~ "6-11mo",
-                                 age_group  == "1-4 years" ~ "1-4y",
-                                 age_group  == "5-64 years" ~ "5-64y",
-                                 age_group == "65+ years" ~ "65+y",
-                                 TRUE ~ age_group),
-           pop_group = paste0(age_group,"_immTotal"),
-           season_start_year = if_else(month(burden_start_date) >= 8,
-                                       year(burden_start_date),
-                                       year(burden_start_date) - 1),
-           season = paste0(season_start_year, "/", season_start_year + 1)) %>%
-    select(burden_start_date, burden_end_date, age_group, pop_group, total_rsv_hospitalisations, season, season_start_year) %>%
+
+  # Age-stratified burden. NB (see section FIXME): this is now a SINGLE SEASONAL
+  # TOTAL per age band, not a 4-weekly proportion series. Loaded here as the
+  # seasonal totals; the 4-weekly plots further down are stale and need redesign.
+  hospital_burden_df = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM") %>%
+    filter(country == country_name) %>%
+    transmute(burden_start_date = as.Date(start_date),
+              burden_end_date   = as.Date(end_date),
+              age_group,
+              pop_group = paste0(age_group, "_immTotal"),
+              total_rsv_hospitalisations,
+              season_start_year = if_else(month(as.Date(start_date)) >= 8,
+                                          year(as.Date(start_date)),
+                                          year(as.Date(start_date)) - 1),
+              season = paste0(season_start_year, "/", season_start_year + 1)) %>%
     setDT()
   
   
@@ -478,25 +480,23 @@ if (!file.exists(static_model_path)) {
   df_both_models = bind_rows(static_df_load  %>% mutate(location = "IE") %>% filter(scenario_id != "test_vacc"), 
                              respiCompass_df_submission %>% mutate(Model = "Dynamic"))
   
+  # Labels keyed to the RespiCompass target-data age bands (pop_group = band + _immTotal)
   age_labels <- c(
-    "0-2mo_immTotal"   = "<3 months",
-    "3-5mo_immTotal"  = "3-6 months",
-    "6-11mo_immTotal"  = "6-12 months",
-    "1-4y_immTotal"  = "1-5 years",
-    "5-64y_immTotal" = "15-64 years",
-    "65+y_immTotal"   = "65+ years",
-    "total_immTotal"   = "all"
+    "0-2mo_immTotal" = "<3 months",
+    "3-5mo_immTotal" = "3-6 months",
+    "6-11mo_immTotal" = "6-12 months",
+    "1-4_immTotal"   = "1-4 years",
+    "5-17_immTotal"  = "5-17 years",
+    "18-59_immTotal" = "18-59 years",
+    "60-64_immTotal" = "60-64 years",
+    "65-69_immTotal" = "65-69 years",
+    "70-74_immTotal" = "70-74 years",
+    "75-79_immTotal" = "75-79 years",
+    "80+_immTotal"   = "80+ years",
+    "total_immTotal" = "all"
   )
-  
-  age_order <- c(
-    "0-2mo_immTotal",
-    "3-5mo_immTotal",
-    "6-11mo_immTotal",
-    "1-4y_immTotal",
-    "5-64y_immTotal",
-    "65+y_immTotal",
-    "total_immTotal"
-  )
+
+  age_order <- names(age_labels)
   
   
   # Calibration of static model

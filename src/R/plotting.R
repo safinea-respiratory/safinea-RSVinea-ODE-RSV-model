@@ -371,11 +371,11 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
       "6-12m"  = "6-12 months",
       "1-5y"   = "1-5 years",
       "5-18y"  = "5-18 years",
-      "18-59y" = "18-59 years",
-      "60-64y" = "60-64 years",
-      "65-69y" = "65-69 years",
-      "70-74y" = "70-74 years",
-      "75-79y" = "75-79 years",
+      "18-60y" = "18-59 years",
+      "60-65y" = "60-64 years",
+      "65-70y" = "65-69 years",
+      "70-75y" = "70-74 years",
+      "75-80y" = "75-79 years",
       "80+y"   = "80+ years"
     )
     
