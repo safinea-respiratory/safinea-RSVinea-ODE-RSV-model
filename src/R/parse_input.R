@@ -171,7 +171,40 @@ overwrite_defaults = function(y, y_overwrite) {
     # Drop these function items from recursive overwriting
     overwrite_items = overwrite_items[!fn_item_idx]
   }
-  
+
+  # ---- Whole-sequence (array) items ----
+  #
+  # unlist() flattens a multi-element yaml sequence into INDEXED names
+  # ("item1", "item2", ...). Those names cannot be resolved with `$` on either
+  # side, so if left in the loop below both `y$item1` and `y_overwrite$item1`
+  # evaluate to NULL, the class check passes trivially ("NULL" == "NULL"), and
+  # the class-preserving step builds get("as.NULL") and errors out.
+  #
+  # Overwrite such items whole instead, then drop their flattened names from the
+  # loop. This is what allows a country yaml to override vector parameters, e.g.
+  # adult_vaccination_dates, infant_vaccination_start, adult_vaccination_agegroups
+  # or a per-age vector such as background_mortality_rate.
+  is_seq = function(v)
+    (is.atomic(v) || is.list(v)) && is.null(names(v)) && length(v) > 1
+
+  seq_items = names(y_overwrite)[vapply(y_overwrite, is_seq, logical(1))]
+
+  if (length(seq_items) > 0) {
+
+    for (seq_item in seq_items) {
+
+      # Must exist in the defaults (every parameter is initialised there)
+      if (is.null(y[[seq_item]]))
+        stop(" ! Unrecognised item in input yaml file: ", seq_item)
+
+      y[[seq_item]] = y_overwrite[[seq_item]]
+    }
+
+    # Drop the flattened (indexed) names of these items from the loop below
+    overwrite_items = setdiff(overwrite_items,
+                              names(unlist_format(y_overwrite[seq_items])))
+  }
+
   # ---- Overwrite defaults ----
   
   # Loop through whats left: values to overwrite with

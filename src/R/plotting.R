@@ -289,82 +289,62 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
                                filter(age_group == "total",
                                       data_freq == "weekly"))
     
-    # Plot total burden per age group
+    # Plot total burden per age group.
+    # NB: the RespiCompass 2026/2027 round supplies the age-stratified burden as
+    # a single SEASONAL TOTAL per age band (data_freq = "total", date = NA), not
+    # as a 4-weekly time series. These plots therefore compare seasonal totals
+    # BY AGE BAND rather than burden over time.
     plot1A_df = model_df %>%
       ungroup() %>%
-      filter(data_freq == "4-weekly",
+      filter(data_freq == "total",
              param_id %in% plot_id) %>%
       left_join(sets_df, by = c("param_id", "round")) %>%
-      select(param_id, likelihood, age_group, metric, value, data_freq, date) %>%
-      # Filter total age group and correct metric levels
+      select(param_id, likelihood, age_group, metric, value, data_freq) %>%
+      # Correct metric levels (metric_levels is hospital_admissions only)
       filter(metric %in% metric_levels) %>%
-      # Factorise age_group and metric to set the correct order
-      mutate(metric = factor(metric, levels = metric_levels)) %>%
-      # Create facet_label
-      mutate(facet_label = paste(age_group, metric, date, sep = " ")) %>%
-      arrange(age_group, metric) %>%
-      mutate(facet_label = factor(facet_label, levels = unique(facet_label))) %>%
-      mutate(mean = value,
-             scenario = param_id)
-    
-    # --- (optional) keep only the metric/frequency you want ---
-    model_use <- plot1A_df 
-    
+      mutate(metric = factor(metric, levels = metric_levels))
+
+    model_use <- plot1A_df
+
     data_use <- data_df %>%
-      filter(data_freq == "4-weekly")
-    
+      filter(data_freq == "total")
+
     # Order age groups (adjust if your set differs)
     age_order <- respicompass_band_order(o)  # unique reporting bands in order from default.yaml
-    
-    # 1) Summarise model to one value per param_id x age_group (mean here)
+
+    # 1) Model: one seasonal total per param_id x age_group
     model_sum <- model_use %>%
-      group_by(param_id, age_group, date) %>%
-      summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      group_by(param_id, age_group) %>%
+      summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
       mutate(source = "Model")
-    
-    # 2) Replicate observed data for each param_id so it shows in every facet
-    observed_rep <- data_use %>%
-      select(age_group, value, date) %>%
-      mutate(source = "Observed") %>%
-      crossing(model_use %>% distinct(param_id))
-    
+
+    # 2) Observed: one seasonal total per age_group
+    observed_sum <- data_use %>%
+      group_by(age_group) %>%
+      summarise(value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+      mutate(source = "Observed")
+
     # 3) Combine for plotting
-    plot_df <- bind_rows(model_sum, observed_rep) %>%
+    plot_df <- bind_rows(model_sum, observed_sum) %>%
       filter(age_group %in% age_order) %>%
       mutate(age_group = factor(age_group, levels = age_order))
     
-    # 4) Plot: side-by-side (tight) bars, faceted by param_id
-    ggplot(plot_df, aes(x = age_group, y = value, fill = source)) +
-      geom_col(position = position_dodge(width = 0.6), width = 0.5) +
-      facet_wrap(~ param_id) +                 # add scales="free_y" if needed
-      labs(x = "Age group", y = "Number", fill = "Source") +
-      theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    
-    # 5) a second plot
-    # Compute ratio per param_id & age_group
-    ratio_df <- plot_df %>%
-      filter(source %in% c("Model", "Observed")) %>%
-      group_by(age_group, date) %>%
-      summarise(
-        mean_model = mean(value[source == "Model"]),
-        observed   = value[source == "Observed"][1],
-        .groups = "drop"
-      ) %>%
-      mutate(ratio = observed / mean_model )
-    
+    # 4) Model quantiles across parameter samples, per age band
     summ <- plot_df %>%
       filter(source == "Model") %>%
-      group_by(age_group, date) %>%
+      group_by(age_group) %>%
       summarise(
         mean_value = mean(value, na.rm = TRUE),
         sd_value   = sd(value, na.rm = TRUE),
-        quant_50 = quantile(value,probs = 0.5),
-        quant_5 = quantile(value,probs = 0.05),
-        quant_95 = quantile(value,probs = 0.95),
+        quant_50 = quantile(value, probs = 0.5),
+        quant_5  = quantile(value, probs = 0.05),
+        quant_95 = quantile(value, probs = 0.95),
         .groups = "drop"
       )
-    
+
+    # 5) Observed seasonal total per age band
+    obs_pts <- plot_df %>% filter(source == "Observed")
+
     age_labels <- c(
       "0-3m"   = "<3 months",
       "3-6m"   = "3-6 months",
@@ -379,91 +359,44 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
       "80+y"   = "80+ years"
     )
     
-    # Plot
-    g1a = 
-      ggplot(summ, aes(x = date, y = quant_50)) +
+    # Plot: seasonal burden across all age bands on one panel.
+    # Black = model median with 5-95% range across samples; red = observed.
+    g1a =
+      ggplot(summ, aes(x = age_group, y = quant_50)) +
       geom_point() +
       geom_errorbar(aes(ymin = quant_5,
                         ymax = quant_95),
                     width = 0.2) +
-      facet_wrap(~ age_group, scales = "free", labeller = labeller(age_group = age_labels)) +
       # Points for Observed
       geom_point(
-        data = plot_df %>% filter(source == "Observed") %>% group_by(age_group, date) %>% slice(1),
-        aes(x = date, y = value),
-        color = "darkred", size = 2,
-        position = position_dodge(width = 0.8)
+        data = obs_pts,
+        aes(x = age_group, y = value),
+        color = "darkred", size = 2
       ) +
-      # # Ratio as text
-      # geom_text(
-      #   data = ratio_df,
-      #   aes(y = observed, label = sprintf("%.2f", ratio)),
-      #   hjust = -0.5, vjust = 0, color = "black", size = 3
-      # ) +
-      #ylim(c(0,NA)) +
-      coord_cartesian(ylim = c(0, NA)) + 
-      labs(x = "Time", y = "4-weekly burden", fill = "Source") +
-      #theme_minimal() +
-      #scale_y_log10() +
+      scale_x_discrete(labels = age_labels) +
+      coord_cartesian(ylim = c(0, NA)) +
+      labs(x = "Age group",
+           y = "Seasonal burden (black = model, red = observed)") +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     
     
-    # Plot seasonal burden
-    summ_season = plot_df %>%
-      filter(source == "Model") %>%
-      mutate(season_year = if_else(month(date) >= 8, year(date), year(date) - 1)) %>%
-      # Sum across dates in a given season
-      group_by(age_group, season_year, param_id) %>%
-      summarise(
-        season_value = sum(value),
-        .groups = "drop"
-      ) %>%
-      # Mean and sd over samples
-      group_by(age_group, season_year) %>%
-      summarise(
-        mean_value = mean(season_value, na.rm = TRUE),
-        sd_value   = sd(season_value, na.rm = TRUE),
-        quant_50 = quantile(season_value,probs = 0.5),
-        quant_5 = quantile(season_value,probs = 0.05),
-        quant_95 = quantile(season_value,probs = 0.95),
-        .groups = "drop"
-      ) %>%
-      mutate(season = paste0(season_year,'/',season_year+1))
-      
-    
-    g1b = ggplot(summ_season, aes(x = season, y = quant_50)) +
-      geom_point() +
-      geom_errorbar(aes(ymin = quant_5,
-                        ymax = quant_95),
-                    width = 0.2) +
-      facet_wrap(~ age_group, scales = "free", labeller = labeller(age_group = age_labels)) +
-      # Points for Observed
-      geom_point(
-        data = plot_df %>% 
-          filter(source == "Observed") %>% 
-          mutate(season_year = if_else(month(date) >= 8, year(date), year(date) - 1),
-                 season = paste0(season_year,'/',season_year+1)) %>%
-          group_by(age_group, param_id, season) %>% 
-          summarise(
-            value = sum(value, na.rm = TRUE),
-            .groups = "drop"
-          ) %>%
-          group_by(age_group, season) %>% 
-          slice(1),
-        aes(x = season, y = value),
-        color = "darkred", size = 3,
-        position = position_dodge(width = 0.8)
-      ) +
-      # # Ratio as text
-      # geom_text(
-      #   data = ratio_df,
-      #   aes(y = observed, label = sprintf("%.2f", ratio)),
-      #   hjust = -0.5, vjust = 0, color = "black", size = 3
-      # ) +
-      ylim(c(0,NA)) +
-      labs(x = "Season", y = "Seasonal burden", fill = "Source") +
-      #theme_minimal() +
-      #scale_y_log10() +
+    # Plot seasonal burden, per-age-band detail. Free y-scales so fit quality is
+    # visible despite the large magnitude differences between bands (e.g. 0-3m
+    # vs 5-18y). Model median + 5-95% range vs the observed seasonal total.
+    cmp_df <- bind_rows(
+      summ %>% transmute(age_group, source = "Model",
+                         value = quant_50, lo = quant_5, hi = quant_95),
+      obs_pts %>% transmute(age_group, source = "Observed",
+                            value, lo = NA_real_, hi = NA_real_)
+    )
+
+    g1b = ggplot(cmp_df, aes(x = source, y = value, colour = source)) +
+      geom_point(size = 2) +
+      geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.2, na.rm = TRUE) +
+      facet_wrap(~ age_group, scales = "free_y", labeller = labeller(age_group = age_labels)) +
+      # NB: use expand_limits(), not ylim(), so the free_y facet scales are kept
+      expand_limits(y = 0) +
+      labs(x = NULL, y = "Seasonal burden", colour = "Source") +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     ###############################################################
     ###############################################################

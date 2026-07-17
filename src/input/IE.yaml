@@ -1,6 +1,7 @@
 ---
-# Ireland-specific RSV model configuration for the RespiCompass 2025/2026 round.
-# Covers RSV transmission in Ireland from Sep 2023 to Feb 2026 (n_days = 1000).
+# Ireland-specific RSV model configuration for the RespiCompass 2026/2027 round.
+# Covers RSV transmission in Ireland from Sep 2026 to ~Jun 2028 (n_days = 640),
+# spanning the two seasons of the round's modelling period.
 #
 # All model parameters are initialised in default.yaml (fixed values or uncertainty
 # distributions). This file provides Ireland-specific overrides: calibration prior
@@ -52,33 +53,19 @@ contact_matrix_countries: IRL  # ISO 3166-1 alpha-3 country codes (en.wikipedia.
 adult_vacc_coverage: 0.5
 
 # ---- Background (non-RSV) mortality ----
-# Ireland-specific age-specific all-cause mortality, one value per age group in
-# the same order as `age_groups`. Overrides the default placeholder.
+# NOT SET HERE. Ireland's age-specific all-cause mortality is DERIVED AT RUNTIME
+# from the RespiCompass mortality data (annual death counts) divided by the
+# redistributed population — see compute_background_mortality() in auxiliary.R.
+# Anything set here would simply be overwritten by that computation.
 #
-# !!! UNITS DISCLAIMER — READ BEFORE EDITING !!!
-# Interpreted as an ANNUAL per-capita mortality RATE (hazard, deaths per
-# person-year), NOT an annual probability of death (life-table q_x). The model
-# applies monthly survival = exp(-rate/12). If you instead source q_x
-# probabilities, convert with rate = -ln(1 - q_x) before entering them here
-# (see the full explanation in config/default.yaml).
-#
-# PLACEHOLDER FIXME - replace with Irish life-table values (CSO / Eurostat).
-background_mortality_rate: [
-  0.0030,                                         # 0-1m (neonatal)
-  0.0004, 0.0004, 0.0004, 0.0004, 0.0004, 0.0004, # 1-7m
-  0.0004, 0.0004, 0.0004, 0.0004, 0.0004,         # 7-12m
-  0.0002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002, # 12-18m
-  0.0002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002, # 18-24m
-  0.0002, 0.0002,                                 # 24-30m, 30-36m
-  0.0001, 0.0001,                                 # 3-4y, 4-5y
-  0.0001,                                         # 5-18y
-  0.0010,                                         # 18-59y
-  0.0060,                                         # 60-64y
-  0.0100,                                         # 65-69y
-  0.0170,                                         # 70-74y
-  0.0300,                                         # 75-79y
-  0.0900                                          # 80+y
-]
+# !!! UNITS DISCLAIMER !!!
+# The derived (and fallback) values are an ANNUAL per-capita mortality RATE
+# (hazard, deaths per person-year), NOT an annual probability of death
+# (life-table q_x). The model applies monthly survival = exp(-rate/12), spread
+# uniformly across the year (flat monthly rate — no seasonality). If you ever
+# hand-set rates, convert q_x probabilities first with rate = -ln(1 - q_x).
+# The manual fallback vector + full explanation live in config/default.yaml, and
+# are used only when a country is absent from the RespiCompass mortality data.
 
 # ---- Calibration settings ----
 calibration_parameters:

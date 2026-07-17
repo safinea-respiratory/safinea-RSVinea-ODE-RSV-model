@@ -298,8 +298,8 @@ simulate_parameters = function(o, fit, r_idx, param_ids) {
     # Export necessary info to each worker node
     clusterExport(cl, c("o")) 
     
-    #for(task_id in 1:nrow(sim_df)){ # Keep this for debugging without parallelisation
-    process_task = function(task_id) {
+    for(task_id in 1:nrow(sim_df)){ # Keep this for debugging without parallelisation
+    #process_task = function(task_id) {
       # Select parameter set associated with this task ID 
       param_df = sim_df[task_id, ]
       param_id = param_df$param_id
@@ -341,7 +341,7 @@ simulate_parameters = function(o, fit, r_idx, param_ids) {
       
       return(output_df)
     }
-    
+    browser()
     res_list = pblapply(X = 1:nrow(sim_df), FUN = process_task, cl=cl)
     stopCluster(cl)
   }
@@ -646,27 +646,35 @@ aggregate_model_output <- function(data_model, data_reported, date_col = "date")
     four_week = NULL
     
   } else{
-    dates_4weekly = intersect(data_model$date %>% unique(), 
-                              data_reported %>% filter(data_freq == "4-weekly") %>% 
+    dates_4weekly = intersect(data_model$date %>% unique(),
+                              data_reported %>% filter(data_freq == "4-weekly") %>%
                                 pull(date)) %>% as.Date()
-    if (length(dates_4weekly) > 0){
-      start_date_4weekly = min(dates_4weekly)
+
+    if (length(dates_4weekly) == 0) {
+
+      # No 4-weekly targets in the reported data, so there is no grid to anchor
+      # to and nothing to aggregate. NB the RespiCompass 2026/2027 round supplies
+      # the age-stratified burden as SEASONAL TOTALS (data_freq = "total"), not
+      # as a 4-weekly series, so this is the normal path for that round.
+      four_week = NULL
+
     } else {
-      start_date_4weekly = NA    
+
+      start_date_4weekly = min(dates_4weekly)
+      anchor_monday <- floor_date(start_date_4weekly, "week", week_start = 1)
+      four_week <- data_model %>%
+        filter(date >= anchor_monday) %>%
+        mutate(
+          wk_monday = floor_date(.data[[date_name]], "week", week_start = 1),
+          period = anchor_monday + 6 + weeks(4) * (as.integer(wk_monday - anchor_monday) %/% 28)
+        ) %>%
+        group_by(across(all_of(group_cols)), period) %>%
+        summarise(value = sum(value), .groups = "drop") %>%
+        rename(!!date_name := period) %>%
+        mutate(
+          data_freq = "4-weekly"
+        )
     }
-    anchor_monday <- floor_date(start_date_4weekly, "week", week_start = 1)
-    four_week <- data_model %>%
-      filter(date >= anchor_monday) %>%
-      mutate(
-        wk_monday = floor_date(.data[[date_name]], "week", week_start = 1),
-        period = anchor_monday + 6 + weeks(4) * (as.integer(wk_monday - anchor_monday) %/% 28)
-      ) %>%
-      group_by(across(all_of(group_cols)), period) %>%
-      summarise(value = sum(value), .groups = "drop") %>%
-      rename(!!date_name := period) %>%
-      mutate(
-        data_freq = "4-weekly"
-      )
   }
   
   # MONTHLY

@@ -373,8 +373,8 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 5        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 300  # Number of parameter sets per round
+  rounds: 0        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 10  # Number of parameter sets per round
 
 # ---- Scenarios ----
 # N.B. A baseline scenario is run automatically
