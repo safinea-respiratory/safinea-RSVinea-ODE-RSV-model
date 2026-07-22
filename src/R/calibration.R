@@ -298,50 +298,51 @@ simulate_parameters = function(o, fit, r_idx, param_ids) {
     # Export necessary info to each worker node
     clusterExport(cl, c("o")) 
     
-    for(task_id in 1:nrow(sim_df)){ # Keep this for debugging without parallelisation
-    #process_task = function(task_id) {
-      # Select parameter set associated with this task ID 
+    #for(task_id in 1:nrow(sim_df)){ # Keep this for debugging without parallelisation
+    process_task = function(task_id) {
+      print(Sys.time())
+      # Select parameter set associated with this task ID
       param_df = sim_df[task_id, ]
       param_id = param_df$param_id
-      
+
       # Parameter values in list format (for input into model)
       param_list = param_df %>%
         select(-round, -param_id) %>%
         unique() %>%
         as.list()
-      
+
       # Append flag that we want to perform fit
       fit_list = list.append(param_list, .perform_fit = TRUE)
       fit_list$data = fit$data
       fit_list$dates_model = fit$dates_model
-      
+
       # Fix uncertainty parameters at the central (median) value of their
       # distributions during calibration, so the likelihood reflects the
       # fitted parameters rather than uncertainty-sampling noise. Full
       # parameter uncertainty is propagated later in the scenario runs.
       uncert_list = sample_average(o)  # See uncertainty.R
-      
+
       message(" - Running model")
-      
+
       result = model(o,
                      scenario = "baseline",
-                     fit      = fit_list, 
-                     uncert   = uncert_list, 
+                     fit      = fit_list,
+                     uncert   = uncert_list,
                      verbose  = "none")
-      
+
       # include round, and filter to fit metrics if specified
       output_df = result$output %>%
         { if (!is.null(o$fit_metrics)) filter(., !is.na(value), metric %in% c(o$fit_metrics, "total")) else . } %>%
         mutate(param_id = !!param_id,
                round    = r_val,
                .before  = 1)
-      
+
       # Save sample output as an RDS file
       saveRDS(output_df, paste0(o$pth$fit_samples, param_id, ".rds"))
-      
+
       return(output_df)
     }
-    browser()
+
     res_list = pblapply(X = 1:nrow(sim_df), FUN = process_task, cl=cl)
     stopCluster(cl)
   }

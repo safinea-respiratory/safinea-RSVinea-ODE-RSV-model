@@ -87,8 +87,29 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
   
   
+  # ---- Numerics ----
+  # ODE solver method passed to deSolve::ode(). The dual-vaccination model has
+  # ~3,000 states (3 tiers x W adult waning stages dominate), and for a STIFF
+  # solver the Jacobian dominates runtime: a dense n x n Jacobian costs ~n extra
+  # derivative calls to assemble plus an O(n^3) factorisation, repeated every few
+  # steps — and that cost is per-STEP, so it does NOT shrink when you reduce
+  # n_days. This is the single biggest runtime driver.
+  #
+  # This SEIRS system is only mildly stiff (fastest rates ~1/4-1/9 per day), so a
+  # non-stiff / auto-switching solver usually wins by avoiding the Jacobian:
+  #   "lsoda"  - DEFAULT. Auto-switches non-stiff <-> stiff, starting non-stiff.
+  #              Best general choice for this model.
+  #   "vode"   - the previous default; pure stiff BDF with a dense Jacobian.
+  #              Was fine at ~775 states, is the bottleneck at ~3,000.
+  #   "lsodes" - stiff but sparse; its sparsity auto-detection at t0 misses the
+  #              V -> I couplings (V-stages are 0 until the first campaign), so it
+  #              tends to thrash here. Avoid unless you supply the sparsity.
+  #   "adams"  - explicit non-stiff; fastest IF the system is truly non-stiff.
+  # Benchmark on your machine (see the timing snippet) and set the winner.
+  o$ode_method = "adams"
+
   # ---- Calibration settings ----
-  
+
   # Over-dispersion parameter for calculation of likelihood
   # (See Endo et al. 2020 Estimating the overdispersion in COVID-19
   # transmission using outbreak sizes outside China)

@@ -154,6 +154,16 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
     stop("background_mortality_rate has ", n_mort, " values but there are ",
          p$n_age, " age groups; it must have exactly one rate per age group.")
 
+  # ---- Sanity check: adult waning curve length ----
+  # adult_vaccine_rel_protection is indexed by waning stage (1..W) and is applied
+  # with sweep() over the n_age x W V-stage matrices, so a length mismatch would
+  # silently recycle and corrupt protection by stage. Encode shorter immunity
+  # durations by decaying this curve to 0 earlier, NOT by changing W.
+  n_adult_curve <- length(unlist(p$adult_vaccine_rel_protection))
+  if (n_adult_curve != p$W)
+    stop("adult_vaccine_rel_protection has ", n_adult_curve, " values but W = ",
+         p$W, "; it must have exactly one value per waning stage (1..W).")
+
   # ---- Model set up ---
   if (verbose != "none") message(" - Running model")
   
@@ -234,13 +244,15 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
             " will use scalar = 1. Either shorten n_days or extend ",
             "season_effect in the yaml.")
   
-  # Solve ODE model
+  # Solve ODE model.
+  # Solver method is set in options.R (o$ode_method) — see the note there on why
+  # a sparse Jacobian ("lsodes") suits this model far better than a dense one.
   out = deSolve::ode(y = states,
                      times = seq(1, p$n_days, by = 1),
                      func = rsv_model,
                      p = p,
                      events = list(func = ageing_event, time = event_times),
-                     method = "vode",
+                     method = o$ode_method,
                      atol = 1e-4,    # absolute tolerance
                      rtol = 1e-4)    # relative tolerance
   

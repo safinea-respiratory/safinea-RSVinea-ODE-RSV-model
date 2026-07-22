@@ -272,20 +272,29 @@ infant_vacc_coverage: 0.83
 # at the peak vaccine effect, decaying to 0 (fully waned) by month W. The vaccine
 # effect itself is scaled by adult_vacc_IE below; residual susceptibility is
 # immunity = 1 - adult_vacc_IE * rel_protection. Protection is therefore HIGHEST
-# just after vaccination (month 1) and wanes to nothing by month 36.
+# just after vaccination (month 1) and wanes to nothing by month W.
+#
+# MUST have exactly W entries (validated in model.R).
+#
+# W is the MAXIMUM immunity duration, i.e. the longest arm of the RespiCompass
+# 2026/2027 scenario grid (6 / 12 / 18 months). SHORTER durations are encoded by
+# overriding THIS CURVE in a scenario so it reaches 0 earlier (e.g. a 6-month
+# arm decays to 0 by month 6 and is 0 for months 7-18) — do NOT change W per
+# scenario, since W sets the number of model compartments.
 adult_vaccine_rel_protection: [
-  1.000, 0.971, 0.943, 0.914, 0.886, 0.857, # months 1-6
-  0.829, 0.800, 0.771, 0.743, 0.714, 0.686, # months 7-12
-  0.657, 0.629, 0.600, 0.571, 0.543, 0.514, # months 13-18
-  0.486, 0.457, 0.429, 0.400, 0.371, 0.343, # months 19-24
-  0.314, 0.286, 0.257, 0.229, 0.200, 0.171, # months 25-30
-  0.143, 0.114, 0.086, 0.057, 0.029, 0.000  # months 31-36
+  1.000, 0.941, 0.882, 0.824, 0.765, 0.706, # months 1-6
+  0.647, 0.588, 0.529, 0.471, 0.412, 0.353 # months 7-12
 ]
 adult_vacc_IE: 0.80      # VE against acquisition for adults (PLACEHOLDER FIXME)
 adult_vacc_IE_hosp: 0.90 # Overall VE against hospitalisation for adults (unconditional, must be >= adult_vacc_IE; model derives conditional internally) (PLACEHOLDER FIXME)
 adult_vacc_coverage: 0.0 # Set per country (e.g. IE.yaml); default 0 means no adult vaccination
 adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
-W: 36 # Waning chain length in months (duration of adult vaccine protection)
+# Waning chain length in months = the MAXIMUM adult immunity duration modelled,
+# set to the longest arm of the 2026/2027 scenario grid (6/12/18 months).
+# NB: W drives the compartment count (3 tiers x W adult V-stages), so it is the
+# single biggest driver of runtime — every +1 adds 3 x n_age ODE states. Encode
+# shorter durations via adult_vaccine_rel_protection, not by changing W.
+W: 12
 
 # ---- Infant vaccination schedule ----
 # Aligned to the RespiCompass 2026/2027 round (two seasons: 2026/27 and 2027/28).
@@ -373,8 +382,8 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 0        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 10  # Number of parameter sets per round
+  rounds: 1        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 30  # Number of parameter sets per round
 
 # ---- Scenarios ----
 # N.B. A baseline scenario is run automatically
