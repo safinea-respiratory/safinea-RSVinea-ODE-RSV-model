@@ -72,51 +72,82 @@ calibration_parameters:
 - param: "seasonality_exponent"
   lower: 0.5
   upper: 2.0
-- param: "season2_effect"
-  lower: 0.7
-  upper: 1.1
-- param: "season3_effect"
-  lower: 0.7
-  upper: 1.1
-- param: "infant_vaccination_catch_up_coverage"
-  lower: 0.3
-  upper: 0.7
 - param: "rel_hosp_a_A"
-  lower: 90
-  upper: 120
+  lower: 400
+  upper: 600
 - param: "rel_hosp_b_A"
-  lower: 20
-  upper: 30
+  lower: 45
+  upper: 70
 - param: "rel_hosp_c_A"
-  lower: 5
-  upper: 12
+  lower: 28
+  upper: 50
 - param: "beta_A"
   lower: 0.060
-  upper: 0.099
+  upper: 0.085
 - param: "p_hosp_A"
-  lower: 0.000120
-  upper: 0.000190
+  lower: 0.000080
+  upper: 0.000092
 - param: "init_inf"
-  lower: 0.05
-  upper: 0.15
+  lower: 0.12
+  upper: 0.30
 - param: "omega_1"
   lower: 100
-  upper: 140
+  upper: 170
 - param: "omega_2"
   lower: 120
-  upper: 160
-- param: "omega_3"
-  lower: 130
   upper: 180
+- param: "omega_3"
+  lower: 120
+  upper: 190
 - param: "omega_4"
-  lower: 140
+  lower: 130
   upper: 200
 - param: "peak_day"
-  lower: 110
-  upper: 130
+  lower: 100
+  upper: 120
 - param: "amplitude"
-  lower: 0.15
-  upper: 0.35 
+  lower: 0.16
+  upper: 0.24 
+
+# - param: "seasonality_exponent"
+#   lower: 0.5
+#   upper: 2.0
+# - param: "rel_hosp_a_A"
+#   lower: 90
+#   upper: 120
+# - param: "rel_hosp_b_A"
+#   lower: 20
+#   upper: 30
+# - param: "rel_hosp_c_A"
+#   lower: 5
+#   upper: 12
+# - param: "beta_A"
+#   lower: 0.060
+#   upper: 0.099
+# - param: "p_hosp_A"
+#   lower: 0.000120
+#   upper: 0.000190
+# - param: "init_inf"
+#   lower: 0.05
+#   upper: 0.15
+# - param: "omega_1"
+#   lower: 100
+#   upper: 140
+# - param: "omega_2"
+#   lower: 120
+#   upper: 160
+# - param: "omega_3"
+#   lower: 130
+#   upper: 180
+# - param: "omega_4"
+#   lower: 140
+#   upper: 200
+# - param: "peak_day"
+#   lower: 110
+#   upper: 130
+# - param: "amplitude"
+#   lower: 0.15
+#   upper: 0.35 
 
 # Additional options for calibration
 calibration_options:

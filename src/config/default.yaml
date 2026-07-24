@@ -304,7 +304,7 @@ infant_vaccination_end: ["2027-02-28", "2028-02-28"]
 # One-time catch-up campaign for infants born outside the RSV season
 infant_vaccination_catch_up_date: "2026-09-01"
 infant_vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m"]
-infant_vaccination_catch_up_coverage: 0.40
+infant_vaccination_catch_up_coverage: 0.00
 
 # ---- Adult vaccination schedule ----
 # Single annual campaign date(s); eligible adults are vaccinated on this date each year
@@ -312,8 +312,8 @@ adult_vaccination_dates: ["2026-10-01", "2027-10-01"]
 
 # 
 #season_effect: [1.03, 1.0, 0.95]
-season2_effect: 0.9
-season3_effect: 0.9
+season2_effect: 1.0
+season3_effect: 1.0
 seasonality_exponent: 1
 
 # ---- Rates of waning immunity ----

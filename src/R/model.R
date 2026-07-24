@@ -1299,19 +1299,22 @@ age_relativity = function(p){
       group_by(larger_group) %>%
       slice(1) %>%   # Keep just 'larger groups'
       ungroup() %>%
-      # TODO: the rnorm() draws below inject fresh randomness into p_hosp_A
-      # on every call, so calibration is not reproducible for the same fit.
-      # Either make this deterministic (use mean = 0.25) or route through
-      # the yaml `uncertainty:` block so the draw is logged and seeded.
+      # The DATA-DERIVED shape components carry a small mean-0 multiplicative
+      # jitter, 1 + N(0, 0.03): the infant 3-6m/6-12m burden-ratio scalings and
+      # the elderly population-normalised shape (one independent draw per band).
+      # The fixed amplitudes (0-3m, 1-5y) are not jittered.
+      # NB: these rnorm() draws are re-sampled on every model() call, so a fit is
+      # NOT reproducible for a given parameter set — seed them (or route through
+      # the yaml `uncertainty:` block) if you need reproducibility.
       # Elderly bands get rel_hosp_c_A (calibratable amplitude, anchored at
       # 60-64y = 1.0) times the data-derived population-normalised shape.
       mutate(eld_mult = unname(elderly_shape[larger_group]),
              p_hosp_A = case_when(
         larger_group %in% c("0-3m")  ~ p_hosp_A * p$rel_hosp_a_A,
-        larger_group %in% c("3-6m")  ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0.25, 0.03)) / ratio1,
-        larger_group %in% c("6-12m") ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0.25, 0.03)) / ratio2,
+        larger_group %in% c("3-6m")  ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio1,
+        larger_group %in% c("6-12m") ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio2,
         larger_group %in% c("1-5y")  ~ p_hosp_A * p$rel_hosp_b_A,
-        !is.na(eld_mult)             ~ p_hosp_A * p$rel_hosp_c_A * eld_mult,
+        !is.na(eld_mult)             ~ p_hosp_A * p$rel_hosp_c_A * eld_mult * (1 + rnorm(length(larger_group), 0, 0.03)),
         TRUE ~ p_hosp_A)) %>%
       select(-eld_mult) %>%
       # Map hospitalisation risk back to fine age groups
