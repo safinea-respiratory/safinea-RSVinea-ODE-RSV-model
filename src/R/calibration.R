@@ -119,8 +119,9 @@ setup_calibration = function(o) {
       filter(iso2_code == opts$country) %>%
       pull(country)
     pop_data = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM") %>%
+      normalise_iso2() %>%                 # Eurostat 'EL' -> ISO-2 'GR' (Greece)
       filter(country == opts$country) %>%
-      remap_age_groups(o$respicompass_age_map) 
+      remap_age_groups(o$respicompass_age_map)
     
   } 
   

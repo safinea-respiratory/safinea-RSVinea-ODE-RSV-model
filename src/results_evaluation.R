@@ -48,9 +48,11 @@ country_code = "IE"
 o = set_options(do_step = c(1:3), analysis_name = country_code)
 
 # RespiCompass reference data for the current (2026/2027) round; see options.R.
-# NB: the population file's `country` column is the ISO-2 code.
+# NB: the population file's `country` column is the ISO-2 code, and uses
+# Eurostat's 'EL' for Greece - normalise_iso2() maps it to 'GR' (see auxiliary.R).
 country_list = o$countries_df
-pop_df = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM")
+pop_df = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM") %>%
+  normalise_iso2()
 
 # Age group mapping — read from default.yaml (single source of truth)
 age_group_map = age_group_map_df(o)
@@ -445,6 +447,7 @@ if (!file.exists(static_model_path)) {
 
   # Weekly admissions (total, all ages) — clean weekly time series.
   hospital_admissions_df = read.csv(o$respicompass$hospital_admissions, fileEncoding = "UTF-8-BOM") %>%
+    normalise_country_name() %>%   # "Czech Republic" -> "Czechia"
     filter(country == country_name) %>%
     transmute(target_end_date = as.Date(target_end_date),
               weekly_rsv_hospitalisations) %>%
@@ -454,6 +457,7 @@ if (!file.exists(static_model_path)) {
   # TOTAL per age band, not a 4-weekly proportion series. Loaded here as the
   # seasonal totals; the 4-weekly plots further down are stale and need redesign.
   hospital_burden_df = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM") %>%
+    normalise_country_name() %>%   # "Czech Republic" -> "Czechia"
     filter(country == country_name) %>%
     transmute(burden_start_date = as.Date(start_date),
               burden_end_date   = as.Date(end_date),

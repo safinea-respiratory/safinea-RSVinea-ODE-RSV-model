@@ -14,6 +14,40 @@ remap_age_groups = function(df, mapping, col = "age_group") {
 }
 
 # -------------------------------------------------------- -
+# Normalise country keys across RespiCompass data files ----
+# -------------------------------------------------------- -
+# The RespiCompass files are NOT internally consistent in how they key countries,
+# and the model joins on the convention in supporting-files/countries.csv:
+#
+#   * GREECE   - population_estimates.csv and births_by_month.csv use Eurostat's
+#                'EL'; countries.csv (and hence the model) uses ISO-2 'GR'.
+#   * CZECHIA  - the target-data files (hospitaladmissions.csv,
+#                hospitalburden_agegroups.csv) name it "Czech Republic";
+#                countries.csv calls it "Czechia".
+#
+# Left unhandled, the filters silently match ZERO rows for those countries:
+# Greece gets an empty population (model failure), Czechia an empty calibration
+# target (nothing to fit to). Both helpers are idempotent, so it is safe to apply
+# them to any RespiCompass table defensively.
+normalise_iso2 = function(df, col = "country") {
+  if (!is.null(df) && col %in% names(df)) {
+    v = as.character(df[[col]])
+    v[v == "EL"] = "GR"
+    df[[col]] = v
+  }
+  return(df)
+}
+
+normalise_country_name = function(df, col = "country") {
+  if (!is.null(df) && col %in% names(df)) {
+    v = as.character(df[[col]])
+    v[v == "Czech Republic"] = "Czechia"
+    df[[col]] = v
+  }
+  return(df)
+}
+
+# -------------------------------------------------------- -
 # Canonical fine -> reporting age-group lookup ----
 # Single source of truth: age_group_map in default.yaml, so the
 # fine-to-reporting mapping is never hard-coded per script.
@@ -281,22 +315,40 @@ reband_contact_matrix <- function(mat, original_breaks, target_breaks, pop = NUL
   )
   
   # Build a full month-level version of the matrix
+  #
+  # NB: the contact rate is divided by the COLUMN bin width (c_len), not the row
+  # width. mat[i,j] is the mean number of contacts a person in ego-group i has
+  # with alters in group j. Splitting a group into finer bands therefore behaves
+  # differently by dimension:
+  #   - COLUMNS (alters) must be SPLIT proportionally, since the alters are
+  #     divided between the finer bands -> divide by c_len.
+  #   - ROWS (egos) must be REPLICATED, since each person in a finer ego band has
+  #     the same per-person contact rate -> no division.
+  # Combined with collapse_from_1m() this gives
+  #     collapsed[i,j] = mat[I,J] * len_target(j) / len_original(J),
+  # which round-trips exactly (collapsed == mat) for ANY set of bin widths.
+  #
+  # This previously divided by r_len, which is equivalent ONLY when all original
+  # bins share the same width (as in the plain 5-year Prem bands). It silently
+  # broke once the last band was widened to 75-100y to cover the 80+ model group:
+  # every 75+ ego row was scaled by 60/300 = 1/5, cutting their force of infection
+  # fivefold and collapsing modelled burden in 75-79y and 80+y.
   expand_to_1m <- function(mat, age_bins) {
     n <- sum(age_bins$upper - age_bins$lower)
     full_mat <- matrix(0, nrow = n, ncol = n)
-    
+
     row_idx <- 1
     for (i in 1:nrow(age_bins)) {
       r_len <- age_bins$upper[i] - age_bins$lower[i]
       col_idx <- 1
       for (j in 1:nrow(age_bins)) {
         c_len <- age_bins$upper[j] - age_bins$lower[j]
-        full_mat[row_idx:(row_idx + r_len - 1), col_idx:(col_idx + c_len - 1)] <- mat[i, j]/r_len
+        full_mat[row_idx:(row_idx + r_len - 1), col_idx:(col_idx + c_len - 1)] <- mat[i, j]/c_len
         col_idx <- col_idx + c_len
       }
       row_idx <- row_idx + r_len
     }
-    
+
     return(full_mat)
   }
   

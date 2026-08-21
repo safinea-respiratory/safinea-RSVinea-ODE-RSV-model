@@ -69,7 +69,10 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   # season (2026-09 to 2027-08), but the modelling period spans two seasons, so
   # repeat the same monthly births forward one year to populate newborns in the
   # 2027/28 season (assumes births are stable year-to-year). Country is ISO-2.
+  # NB: normalise_iso2() maps Eurostat's 'EL' to ISO-2 'GR' - without it Greece
+  # silently matches zero rows here (see auxiliary.R).
   births_ref = read.csv(o$births_url, fileEncoding = "UTF-8-BOM") %>%
+    normalise_iso2() %>%
     mutate(date = ymd(date)) %>%
     select(country, date, births) %>%
     filter(!is.na(date)) %>%
@@ -80,11 +83,16 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
     setDT()
 
   # Raw all-cause death counts by age band (used to derive mortality rates).
-  o$mortality = read.csv(o$mortality_url, fileEncoding = "UTF-8-BOM")
+  # This file already uses 'GR'/'Czechia'; normalised defensively for consistency.
+  o$mortality = read.csv(o$mortality_url, fileEncoding = "UTF-8-BOM") %>%
+    normalise_iso2(col = "iso2_code") %>%
+    normalise_country_name()
 
   # Age-stratified RSV hospital burden (seasonal totals per age group), kept
   # separately here as the source for age_relativity()'s p_hosp-by-age ratios.
-  o$burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
+  # Target files name Czechia "Czech Republic"; normalise to match countries.csv.
+  o$burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM") %>%
+    normalise_country_name()
   
   
   # ---- Numerics ----

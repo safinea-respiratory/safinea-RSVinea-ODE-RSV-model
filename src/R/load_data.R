@@ -40,6 +40,7 @@ load_epi = function(o, opts, fit) {
   # Get population size by age group
   if(!is.null(opts$country_name)){
     pop_data = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM") %>%
+      normalise_iso2() %>%                   # Eurostat 'EL' -> ISO-2 'GR' (Greece)
       filter(country == opts$country) %>%    # RespiCompass population uses ISO-2 codes
       remap_age_groups(o$respicompass_age_map)
   } else {message("No population data needed for user-defined analysis")}
@@ -58,7 +59,10 @@ load_epi = function(o, opts, fit) {
     # --- Weekly hospital admissions (total, all ages) --- #
     # RespiCompass target-data uses full country names and reports the ISO-week
     # Sunday directly in `target_end_date`, so no +6 shift or ISO-2 remap needed.
-    raw_data = read.csv(o$respicompass$hospital_admissions, fileEncoding = "UTF-8-BOM")
+    # normalise_country_name(): target files say "Czech Republic", countries.csv
+    # says "Czechia" - without this Czechia matches zero rows (no fitting target).
+    raw_data = read.csv(o$respicompass$hospital_admissions, fileEncoding = "UTF-8-BOM") %>%
+      normalise_country_name()
 
     data_hosp_admissions = raw_data %>%
       filter(country == opts$country_name) %>%
@@ -89,7 +93,8 @@ load_epi = function(o, opts, fit) {
     # matches the model's per-age 'total' aggregation in aggregate_model_output().
     # Age bands are remapped to the model's reporting-band labels so they align
     # with the model-output grouping in fitting_format().
-    raw_burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
+    raw_burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM") %>%
+      normalise_country_name()   # "Czech Republic" -> "Czechia"
 
     data_hosp_burden = raw_burden %>%
       filter(country == opts$country_name) %>%

@@ -47,6 +47,10 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # breaks 0,5,...,75). We extend the last break to 100y so that the 80+y model
   # age group inherits the 75-79y contact rates (standard assumption for ages
   # beyond the Prem data range).
+  # NB: this makes the final original band (75-100y) 5x wider than the others.
+  # reband_contact_matrix() handles unequal band widths correctly (it normalises
+  # by the COLUMN band width - see the note in expand_to_1m); do not revert that
+  # normalisation, or every 75+ ego row is silently scaled down fivefold.
   p$contact_matrix <- reband_contact_matrix(mat = p$contact_matrix,
                                             original_breaks = c(seq(0, 75, 5), 100),
                                             target_breaks = p$age_breaks)
@@ -71,7 +75,9 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # Load the population data (RespiCompass uses ISO-2 country codes) and adjust
   # the group sizes. Relabel to the full country name so redistribute_population
   # (which filters on that name) matches and the output carries a readable label.
+  # normalise_iso2() maps Eurostat's 'EL' to 'GR' so Greece is not silently empty.
   population_github_df = read.csv(o$pop_url, fileEncoding = "UTF-8-BOM") %>%
+    normalise_iso2() %>%
     filter(country == country_iso2) %>%
     mutate(country = country_name) %>%
     remap_age_groups(o$respicompass_age_map)
