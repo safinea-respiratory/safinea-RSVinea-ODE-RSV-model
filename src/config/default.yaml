@@ -264,7 +264,7 @@ infant_vaccine_rel_protection: [ # relative vaccination protection by age group
 ] # Values from RespiCompass mean waning curves https://github.com/european-modelling-hubs/RespiCompass/blob/main/Previous_Rounds/2025-2026_round_1/auxiliary-data/waning/waning_curves.csv
 infant_vacc_IE: 0.87      # VE against acquisition for infants; values from RespiCompass
 infant_vacc_IE_hosp: 0.90 # Overall VE against hospitalisation for infants (unconditional, must be >= infant_vacc_IE; model derives conditional internally)
-infant_vacc_coverage: 0.83
+infant_vacc_coverage: 0.0
 
 # ---- Adult vaccine efficacy ----
 # PLACEHOLDER FIXME - replace with trial-derived estimates when available
@@ -382,8 +382,8 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 1        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 30  # Number of parameter sets per round
+  rounds: 3        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 100  # Number of parameter sets per round
 
 # ---- Scenarios ----
 # N.B. A baseline scenario is run automatically

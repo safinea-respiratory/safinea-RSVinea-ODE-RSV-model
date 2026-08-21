@@ -1,16 +1,24 @@
 ---
-# Ireland-specific RSV model configuration for the RespiCompass 2026/2027 round.
-# Covers RSV transmission in Ireland from Sep 2026 to ~Jun 2028 (n_days = 640),
-# spanning the two seasons of the round's modelling period.
+# Bulgaria-specific RSV model configuration for the RespiCompass 2026/2027 round.
+# Covers RSV transmission in Bulgaria from Sep 2026, spanning the round's
+# modelling period.
 #
 # All model parameters are initialised in default.yaml (fixed values or uncertainty
-# distributions). This file provides Ireland-specific overrides: calibration prior
+# distributions). This file provides Bulgaria-specific overrides: calibration prior
 # bounds, data source settings, and vaccination parameters.
+#
+# Calibration prior bounds are carried over from the RespiCompass 2025/2026 round
+# for this country. NB: rel_hosp_c_A has been RESCALED for the new model, which
+# multiplies it by the data-derived elderly_shape (normalised to 60-64y = 1.0):
+#   rel_hosp_c_A_new = rel_hosp_c_A_old / shape_bar,  shape_bar(BG) = 4.304991
+# where shape_bar is the 65+ hospitalisation rate relative to the 60-64y rate,
+# computed from the RespiCompass burden and population data. Bounds are then
+# widened by -25%/+25% since these priors come from a different model and season.
 #
 # Structure:
 # - Simulation settings: time horizon and transmission rate
 # - State durations and waning immunity
-# - Social mixing (Irish contact matrix)
+# - Social mixing (Bulgaria contact matrix)
 # - Calibration settings: prior bounds
 # - Calibration options: data source, country, fitting period
 
@@ -18,19 +26,19 @@
 
 # Number of days to simulate
 # This must be at least the sum of the burn-in period and the fitting dates.
-# Covers the RespiCompass 2026/2027 modelling period (2026-09-01 to ~2028-06).
+# Covers the RespiCompass 2026/2027 modelling period (2026-09-01 onwards).
 n_days: 400
 
 # Transmission rate at baseline susceptibility (defined as oldest age group) and seasonal maximum
 beta_A: 0.012 # transmission rate
 
 # Seasonality profile
-amplitude: 0.0 # 
-peak_day: 68.37 
+amplitude: 0.0 #
+peak_day: 68.37
 
 # ---- State durations ----
-# Days from exposure to symptom onset for strain A 
-gamma_A: 
+# Days from exposure to symptom onset for strain A
+gamma_A:
   uncertainty:
     fn: "norm"  # Options: unif (min, max), norm (mean, sd), pois (lambda)
     mean: 7
@@ -47,13 +55,13 @@ omega_4: 400  # Days to become susceptible again following later infections
 
 # ---- Social mixing ----
 # Countries to pull contact matrix data from
-contact_matrix_countries: IRL  # ISO 3166-1 alpha-3 country codes (en.wikipedia.org/wiki/ISO_3166-1_alpha-3)
+contact_matrix_countries: BGR  # ISO 3166-1 alpha-3 country codes (en.wikipedia.org/wiki/ISO_3166-1_alpha-3)
 
 # ---- Adult vaccination ----
 adult_vacc_coverage: 0.0
 
 # ---- Background (non-RSV) mortality ----
-# NOT SET HERE. Ireland's age-specific all-cause mortality is DERIVED AT RUNTIME
+# NOT SET HERE. Bulgaria's age-specific all-cause mortality is DERIVED AT RUNTIME
 # from the RespiCompass mortality data (annual death counts) divided by the
 # redistributed population — see compute_background_mortality() in auxiliary.R.
 # Anything set here would simply be overwritten by that computation.
@@ -73,28 +81,28 @@ calibration_parameters:
   lower: 0.5
   upper: 2.0
 - param: "rel_hosp_a_A"
-  lower: 400
-  upper: 650
+  lower: 700
+  upper: 1050
 - param: "rel_hosp_b_A"
-  lower: 35
-  upper: 50
+  lower: 40
+  upper: 75
 - param: "rel_hosp_c_A"
-  lower: 5
-  upper: 12
+  lower: 5.23   # rescaled from old 30-40 by shape_bar=4.304991, widened +/-25%
+  upper: 11.61
 - param: "beta_A"
-  lower: 0.060
-  upper: 0.085
+  lower: 0.070
+  upper: 0.090
 - param: "p_hosp_A"
-  lower: 0.000110
-  upper: 0.000130
+  lower: 0.000040
+  upper: 0.000100
 - param: "init_inf"
-  lower: 0.09
+  lower: 0.10
   upper: 0.30
 - param: "omega_1"
   lower: 100
   upper: 170
 - param: "omega_2"
-  lower: 120
+  lower: 110
   upper: 180
 - param: "omega_3"
   lower: 120
@@ -107,21 +115,21 @@ calibration_parameters:
   upper: 120
 - param: "amplitude"
   lower: 0.16
-  upper: 0.24 
+  upper: 0.24
 
 
 # Additional options for calibration
 calibration_options:
  data_source:
     epi: "RESPICOMPASS"      # OPTIONS: 'RESPICOMPASS', 'USER-DEFINED'
- country: "IE"         # N.B. Cross-reference with contact matrix above
+ country: "BG"         # N.B. Cross-reference with contact matrix above
  data_end: 2027-08-29  # Last day in data (end of RespiCompass 2026/27 reference season)
  data_days: 363        # Length of data for fitting (~one season; data_start = 2026-09-01)
  data_burn_in: 0       # Number of days to simulate before matching to data
  cases: "observed"     # data stream label
  hospital_admissions: "observed" # data stream label
  deaths: "observed"    # data stream label
-  
+
 # Time period for calibration
 calibration_time_period: "day" # OPTIONS: "day", "week", "month", "quarter", "year"
 
@@ -133,4 +141,4 @@ calibration_weights:
   hospital_burden: 1.0
   hospital_beds: 0.0
   deaths: 0.0
-  
+
