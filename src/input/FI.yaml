@@ -116,6 +116,12 @@ calibration_parameters:
 - param: "amplitude"
   lower: 0.22
   upper: 0.30
+# Observation-model over-dispersion (negative-binomial size; larger = less
+# over-dispersed). Fitted rather than fixed, following the RSV literature.
+# Range spans the defensible published values (Krauer fitted ~5.9; RKI fixed 50).
+- param: "k"
+  lower: 1
+  upper: 100
 
 
 # Additional options for calibration

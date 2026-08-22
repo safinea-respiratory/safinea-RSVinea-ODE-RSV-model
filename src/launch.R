@@ -25,7 +25,9 @@ o = set_options(do_step = c(1:3), analysis_name = "IE")
 message("Running RSVinea v2.0 (", o$analysis_name, ")")
 
 # Step 1) Calibrate model ----
+print(Sys.time())
 run_calibration(o) # See R/calibration.R
+print(Sys.time())
 
 # Step 2) Run all scenarios ----
 run_scenarios(o)   # See R/scenarios.R

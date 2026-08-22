@@ -208,24 +208,59 @@ sample_parameters = function(o, fit, r_val) {
     round_path    = paste0("r", r_val-1, "_samples")
     round_samples = try_load(o$pth$fitting, round_path)
     
-    # Weight by likelihood 
-    samples = round_samples %>% 
-      mutate(likelihood = ifelse(is.infinite(likelihood), -1e4, likelihood),
-             # 
-             likelihood_exp = exp(likelihood),
-             likelihood_adjusted = likelihood_exp - min(likelihood_exp) +0.5*(max(likelihood_exp)-min(likelihood_exp)),
-             #weight = 1/exp(likelihood),
-             weight = likelihood_adjusted,
-             weight_norm = weight/sum(weight)) %>%
-      arrange(weight) %>%
-      
-      # Resample required number of sets  
+    # ---- Weight by likelihood ----
+    #
+    # Parameter sets are resampled (with replacement) in proportion to how well
+    # they fitted, so the next round concentrates near the better ones. Two
+    # things can go wrong:
+    #   * weights nearly EQUAL  -> no selection; the round is just random search
+    #   * one weight DOMINATES  -> all draws are copies of a single set, the
+    #                              population collapses to one point and the
+    #                              remaining rounds cannot explore
+    # The effective sample size, ESS = 1 / sum(w^2), measures which regime we are
+    # in: ESS = n when all weights are equal, ESS = 1 when one dominates. (It is
+    # the reciprocal of the probability that two independent draws pick the same
+    # set.) We temper the weights, w ∝ exp(alpha * L), choosing alpha in (0, 1]
+    # so ESS meets a target: alpha = 1 uses the likelihood as-is, smaller alpha
+    # softens the differences to preserve diversity. alpha is never raised above
+    # 1, so we never claim more information than the likelihood actually holds.
+    #
+    # NB subtracting max(L) before exponentiating is essential: log-likelihoods
+    # are large and negative, and exp() of them underflows to 0 for every sample,
+    # which would make all weights 0 and the resampling weights NaN. Subtracting
+    # the max divides every weight by the same constant, so ratios are unchanged.
+    L <- round_samples$likelihood
+    if (all(!is.finite(L)))
+      stop("All likelihoods are non-finite in round ", r_val - 1,
+           " - cannot resample. Check the model output and the likelihood.")
+    # Demote failed runs to well below the worst surviving set (kept, but
+    # effectively never resampled) rather than to an arbitrary fixed constant.
+    L[!is.finite(L)] <- min(L[is.finite(L)], na.rm = TRUE) - 10
+
+    ess_at     <- function(a) { w <- exp(a * (L - max(L))); w <- w / sum(w); 1 / sum(w^2) }
+    ess_target <- 0.5 * length(L)   # conventional SMC choice: keep half the sets effective
+
+    alpha <- if (ess_at(1) >= ess_target) 1 else
+             uniroot(function(a) ess_at(a) - ess_target, c(1e-8, 1))$root
+
+    w <- exp(alpha * (L - max(L)))
+
+    # Report the diagnostic: ESS at alpha = 1 says how much the data actually
+    # discriminated between these parameter sets. ESS ~ n means this round
+    # learned nothing (e.g. an observation model too dispersed to be informative).
+    message(sprintf("  > ESS(untempered) = %.1f / %d | alpha = %.3g | ESS(used) = %.1f",
+                    ess_at(1), length(L), alpha, ess_at(alpha)))
+
+    samples = round_samples %>%
+      mutate(weight_norm = w / sum(w)) %>%
+
+      # Resample required number of sets
       slice_sample(n = opts$init_samples,
                    replace = TRUE,
                    weight_by = weight_norm) %>%
-      
-      # Tidy up 
-      select(-c(param_id, round,  likelihood, likelihood_exp, likelihood_adjusted, weight, weight_norm)) %>%
+
+      # Tidy up
+      select(-c(param_id, round, likelihood, weight_norm)) %>%
       
       # Perturb by Gaussian kernel with variance = variance of resampled sets
       mutate(across(.cols = all_of(fit$params),
@@ -382,15 +417,29 @@ likelihood = function(o, fit, r_idx, do_plot = FALSE) {
     format_weights(fit$input) %>%
     setDT()
   
-  # Combine target data and model output data tables
-  overdisp = o$k
-  
+  # ---- Observation-model over-dispersion ----
+  # `k` is the negative-binomial SIZE: Var = mu + mu^2/k, so LARGER k means LESS
+  # over-dispersion (k -> Inf is Poisson). It behaves like every other model
+  # parameter: if `k` is listed under calibration_parameters it is FITTED, and
+  # param_df carries one value per sample; otherwise the fixed value from the
+  # yaml is used for every sample.
+  if ("k" %in% names(param_df)) {
+    disp_df = param_df %>% select(param_id, .k = k)
+  } else {
+    k_fixed = fit$input$k
+    if (is.null(k_fixed))
+      stop("Observation-model dispersion 'k' not found in the parsed yaml. Add ",
+           "`k:` to config/default.yaml, or list it under calibration_parameters.")
+    disp_df = param_df %>% select(param_id) %>% mutate(.k = k_fixed)
+  }
+
   likelihood_df = model_df %>%
     inner_join(data_df, by = c("age_group", "metric", "date", "data_freq"), relationship = "many-to-many") %>%
+    left_join(disp_df, by = "param_id") %>%
     # Normalise both target and value to ensure comparable scales
     mutate(value = pmax(value, 0)) %>%
     mutate(
-      this_likelihood = weight + dnbinom(round(target), size = overdisp, mu = value, log = TRUE)
+      this_likelihood = weight + dnbinom(round(target), size = .k, mu = value, log = TRUE)
     ) %>%
     # Note: log-likelihood is averaged (mean) within each metric/data_freq,
     # then summed across metrics. The mean step weights each metric equally

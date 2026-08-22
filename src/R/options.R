@@ -22,8 +22,9 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   if (!is.na(analysis_name)) 
     o$analysis_name = analysis_name
   
-  # Number of processes for parallelisation
-  o$parallel = detectCores(all.tests = FALSE, logical = TRUE)
+  # Number of processes for parallelisation.
+  # Leave one core free so the machine stays responsive during long sweeps.
+  o$parallel = max(1, detectCores(all.tests = FALSE, logical = TRUE) - 1)
   
   # Set analysis name and create output directory system
   o = set_dirs(o)  # See directories.R
@@ -32,35 +33,66 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$respicompass_age_map = yaml::read_yaml(o$pth$params_default)$respicompass_age_map
 
   # ---- Data references ----
+  #
+  # LOCAL CACHE. model() re-reads the population file on EVERY call, and model()
+  # is called once per parameter sample, in parallel across workers - thousands
+  # of times per country sweep. Fetching from raw.githubusercontent.com that
+  # often gets the run rate-limited and then everything aborts with
+  # "cannot open the connection". So each remote file is downloaded ONCE into a
+  # local cache and the o$*_url paths point at the local copies; all the
+  # downstream read.csv() calls are unchanged and simply read from disk.
+  #
+  # Set o$refresh_cache = TRUE (or delete the cache directory) to re-download,
+  # e.g. when RespiCompass updates a round's data.
+  respicompass_raw = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/"
+  cache_dir = file.path("data", "respicompass_cache")
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
+  refresh = isTRUE(o$refresh_cache)
+
+  cache_file = function(url) {
+    dest = file.path(cache_dir, basename(url))
+    if (refresh || !file.exists(dest)) {
+      ok = tryCatch({
+        utils::download.file(url, dest, quiet = TRUE, mode = "wb")
+        file.exists(dest) && file.size(dest) > 0
+      }, error = function(e) FALSE, warning = function(w) file.exists(dest) && file.size(dest) > 0)
+      if (!ok) {
+        if (file.exists(dest)) unlink(dest)
+        stop("Could not download ", url, "\n  and no usable cached copy exists at ", dest,
+             "\n  (check your connection; RespiCompass may also be rate-limiting)")
+      }
+    }
+    return(dest)
+  }
+
   # RespiCompass country list: maps full country names to ISO-2 codes.
   # Used throughout the model to look up country names from ISO codes
   # without hard-coding country names.
-  o$countries_url = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/supporting-files/countries.csv"
+  o$countries_url = cache_file(paste0(respicompass_raw, "supporting-files/countries.csv"))
   o$countries_df  = read.csv(o$countries_url)
 
   # ---- RespiCompass 2026/2027 RSV round-1 data ----
   # This round targets novel RSV immunisation strategies for older adults
   # NB: population/births/mortality use ISO-2 country codes; the target hospital
   # files use full country names. See load_data.R / model.R for the keying.
-  respicompass_raw = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/"
 
   # Population by age band and country (ISO-2 country column)
-  o$pop_url = paste0(respicompass_raw, "auxiliary-data/population/population_estimates.csv")
+  o$pop_url = cache_file(paste0(respicompass_raw, "auxiliary-data/population/population_estimates.csv"))
 
   # Monthly live births by country (ISO-2), covering the modelling period
-  o$births_url = paste0(respicompass_raw, "auxiliary-data/births/births_by_month.csv")
+  o$births_url = cache_file(paste0(respicompass_raw, "auxiliary-data/births/births_by_month.csv"))
 
   # All-cause mortality: annual DEATH COUNTS by age band and country (ISO-2).
   # Converted to a per-capita rate at model setup (deaths / population); see
   # compute_background_mortality() in auxiliary.R.
-  o$mortality_url = paste0(respicompass_raw, "auxiliary-data/mortality/mortality_agegroups.csv")
+  o$mortality_url = cache_file(paste0(respicompass_raw, "auxiliary-data/mortality/mortality_agegroups.csv"))
 
   o$vaccine_url = NULL
 
   # RespiCompass target (observed) data links (full country-name column)
   o$respicompass =
-    list(hospital_admissions       = paste0(respicompass_raw, "target-data/hospitaladmissions.csv"),
-         hospital_burden_agegroups = paste0(respicompass_raw, "target-data/hospitalburden_agegroups.csv"))
+    list(hospital_admissions       = cache_file(paste0(respicompass_raw, "target-data/hospitaladmissions.csv")),
+         hospital_burden_agegroups = cache_file(paste0(respicompass_raw, "target-data/hospitalburden_agegroups.csv")))
 
   o$contact_matrices = paste0(o$pth$data_contact, "/contact_all.rdata")
 
@@ -118,10 +150,11 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
 
   # ---- Calibration settings ----
 
-  # Over-dispersion parameter for calculation of likelihood
-  # (See Endo et al. 2020 Estimating the overdispersion in COVID-19
-  # transmission using outbreak sizes outside China)
-  o$k = 0.1
+  # NB: the observation-model over-dispersion used by the likelihood is `k` in
+  # config/default.yaml, NOT an option here. It behaves like any other model
+  # parameter: list it under calibration_parameters to FIT it, otherwise the
+  # fixed yaml value is used. It was previously duplicated as o$k, which
+  # silently shadowed the yaml value - see the note on `k` in default.yaml.
 
   # Re-run fitting, overwrite if TRUE, otherwise will use previous fit
   o$overwrite_samples = TRUE
