@@ -251,26 +251,63 @@ sample_parameters = function(o, fit, r_val) {
     message(sprintf("  > ESS(untempered) = %.1f / %d | alpha = %.3g | ESS(used) = %.1f",
                     ess_at(1), length(L), alpha, ess_at(alpha)))
 
-    samples = round_samples %>%
+    # Resample the required number of sets (with replacement, so better-fitting
+    # sets are drawn repeatedly and the population concentrates on them).
+    resampled = round_samples %>%
       mutate(weight_norm = w / sum(w)) %>%
-
-      # Resample required number of sets
       slice_sample(n = opts$init_samples,
                    replace = TRUE,
                    weight_by = weight_norm) %>%
+      select(-c(param_id, round, likelihood, weight_norm))
 
-      # Tidy up
-      select(-c(param_id, round, likelihood, weight_norm)) %>%
-      
-      # Perturb by Gaussian kernel with variance = variance of resampled sets
+    # ---- Adaptive perturbation kernel ----
+    #
+    # Resampling produces DUPLICATES, so the jitter is what turns them back into
+    # distinct candidates: it is the only step that generates new points to test,
+    # and its width is the search radius.
+    #
+    # A fixed percentage step (previously sd = 0.02) is the wrong radius, because
+    # a fixed % of a parameter's VALUE says nothing about how uncertain we are
+    # about that parameter. Measured on real output, 2% was ~30% of the plausible
+    # range for rel_hosp_a_A but only ~0.4% of it for k - leaving k effectively
+    # frozen while rel_hosp_a_A regularly overshot its bounds.
+    #
+    # Instead take the step size from the SPREAD of the resampled particles for
+    # each parameter: that spread is the current estimate of its uncertainty, so
+    # it is the right scale to explore at. This also anneals automatically (wide
+    # while particles are scattered, narrow once they concentrate) and correctly
+    # gives an already-converged parameter a small step.
+    #
+    # Spread is measured on the LOG scale (the kernel is multiplicative and every
+    # fitted parameter is positive), with a robust IQR-based estimator so a couple
+    # of stray particles cannot inflate the step for the whole population.
+    kernel_scale = if (!is.null(o$kernel_scale)) o$kernel_scale else 0.5
+    kernel_floor = if (!is.null(o$kernel_floor)) o$kernel_floor else 0.01
+
+    kernel_sd = vapply(fit$params, function(prm) {
+      v = resampled[[prm]]
+      v = v[is.finite(v) & v > 0]
+      if (length(v) < 2) return(kernel_floor)
+      s = stats::IQR(log(v)) / 1.349          # robust; equals sd for a normal
+      if (!is.finite(s) || s <= 0) s = stats::sd(log(v))
+      if (!is.finite(s)) s = 0
+      max(kernel_scale * s, kernel_floor)
+    }, numeric(1))
+
+    samples = resampled %>%
+
+      # Perturb: multiplicative log-normal step, sized per parameter
       mutate(across(.cols = all_of(fit$params),
-                    .fns = ~ .x * exp(rnorm(n(), mean = 0, sd = 0.02)))) %>%
-      
-      # Ensure parameter values remain within bounds, capping at limits
+                    .fns  = ~ .x * exp(rnorm(n(), mean = 0, sd = kernel_sd[[cur_column()]])))) %>%
+
+      # Keep values inside the prior by REFLECTING rather than clamping. Clamping
+      # parked every overshoot exactly on the bound, creating a spike there that
+      # is easily misread as "the prior is too narrow" - it accounted for 3.6% of
+      # all sampled values, and 8.3% of peak_day. See reflect_into() in auxiliary.R.
       mutate(across(.cols = all_of(fit$params),
-                    .fns = ~ {col_lower = bounds_wide[[paste0(cur_column(), "_lower")]]
-                    col_upper = bounds_wide[[paste0(cur_column(), "_upper")]]
-                    if_else(. < col_lower, col_lower, if_else(. > col_upper, col_upper, .))})) %>%
+                    .fns  = ~ reflect_into(.x,
+                                           bounds_wide[[paste0(cur_column(), "_lower")]],
+                                           bounds_wide[[paste0(cur_column(), "_upper")]]))) %>%
       as_named_dt(fit$params)
   }
   

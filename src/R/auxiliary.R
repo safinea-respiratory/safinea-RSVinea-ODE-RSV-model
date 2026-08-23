@@ -29,6 +29,23 @@ remap_age_groups = function(df, mapping, col = "age_group") {
 # Greece gets an empty population (model failure), Czechia an empty calibration
 # target (nothing to fit to). Both helpers are idempotent, so it is safe to apply
 # them to any RespiCompass table defensively.
+# -------------------------------------------------------- -
+# Fold values back inside [lo, hi] by REFLECTION ----
+# -------------------------------------------------------- -
+# Used by the calibration perturbation kernel. Clamping (setting out-of-range
+# values to the bound itself) piles a point mass ON the boundary, which then
+# looks like "the prior is too narrow" when it is really just the jitter
+# overshooting. Reflecting preserves the shape of the distribution instead:
+# a value that overshoots the ceiling by d comes back to hi - d.
+# Modular folding handles arbitrarily large overshoots.
+reflect_into = function(v, lo, hi) {
+  if (!is.finite(lo) || !is.finite(hi) || hi <= lo) return(pmin(pmax(v, lo), hi))
+  span = hi - lo
+  x    = (v - lo) %% (2 * span)     # R's %% returns a non-negative result
+  x    = ifelse(x > span, 2 * span - x, x)
+  return(lo + x)
+}
+
 normalise_iso2 = function(df, col = "country") {
   if (!is.null(df) && col %in% names(df)) {
     v = as.character(df[[col]])
