@@ -469,15 +469,60 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
     
     #---- Improve aesthetics ----
     # Prettify plot 3
-    g3 = g3 + theme_classic() + 
-      theme(strip.text   = element_text(size = 12), 
-            axis.title   = element_blank(), 
-            axis.text.x  = element_text(size = 8), 
-            axis.text.y  = element_text(size = 8), 
-            axis.line    = element_blank(), 
-            panel.border = element_rect(linewidth = 1, colour = "black", fill = NA), 
+    g3 = g3 + theme_classic() +
+      theme(strip.text   = element_text(size = 12),
+            axis.title   = element_blank(),
+            axis.text.x  = element_text(size = 8),
+            axis.text.y  = element_text(size = 8),
+            axis.line    = element_blank(),
+            panel.border = element_rect(linewidth = 1, colour = "black", fill = NA),
             strip.background = element_blank())
-    
+
+    # Plot 3b: Posterior by round - one unfilled curve per adaptive sampling
+    # round, overlaid, so the progressive concentration (or lack of it) is
+    # visible. Curves are UNWEIGHTED: they show where the sampler actually put
+    # its particles, which is the quantity that should narrow between rounds.
+    # The x-axis spans the full prior range (via the invisible geom_segment), so
+    # a curve hugging one end means the posterior is pressing against the bound.
+    r_now = suppressWarnings(as.numeric(gsub("\\D", "", round_idx)))
+    g3b   = NULL
+
+    if (is.finite(r_now)) {
+      rounds_df = do.call(rbind, lapply(0:r_now, function(r) {
+        s = try_load(o$pth$fitting, paste0("r", r, "_samples"), throw_error = FALSE)
+        if (is.null(s)) return(NULL)
+        s %>% select(any_of(fit$params)) %>% mutate(round = r)
+      }))
+
+      if (!is.null(rounds_df) && nrow(rounds_df) > 0) {
+        plot3b_df = rounds_df %>%
+          pivot_longer(cols = -round, names_to = "param") %>%
+          mutate(round = factor(round, levels = sort(unique(round)))) %>%
+          setDT()
+
+        g3b = ggplot(plot3b_df) +
+          geom_segment(data    = param_df,
+                       mapping = aes(x = lower, y = 0, xend = upper, yend = 0),
+                       alpha   = 0) +
+          geom_density(mapping  = aes(x = value, y = after_stat(scaled),
+                                      colour = round, group = round),
+                       fill = NA, linewidth = 0.7, trim = density_trim) +
+          facet_wrap(~param, nrow = 5, scales = "free_x") +
+          scale_colour_viridis_d(name = "Round", option = "C", end = 0.85) +
+          scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+          scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+          theme_classic() +
+          theme(strip.text   = element_text(size = 12),
+                axis.title   = element_blank(),
+                axis.text.x  = element_text(size = 8),
+                axis.text.y  = element_text(size = 8),
+                axis.line    = element_blank(),
+                panel.border = element_rect(linewidth = 1, colour = "black", fill = NA),
+                strip.background = element_blank(),
+                legend.position  = "bottom")
+      }
+    }
+
   }
   
   if (!is.null(fig_name))
@@ -488,6 +533,11 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
   
   if (!is.null(fig_name))
     fig_save(o, g3, paste0(fig_name,"_posteriors"), round_idx)
+
+  # Posterior by round (line only, all rounds overlaid) - skipped silently if
+  # only a single round exists, since there would be nothing to compare against.
+  if (!is.null(fig_name) && !is.null(g3b))
+    fig_save(o, g3b, paste0(fig_name,"_posteriors_by_round"), round_idx)
   
   if (!is.null(fig_name))
     fig_save(o, g1a, paste0(fig_name,"_age_burden"), round_idx)

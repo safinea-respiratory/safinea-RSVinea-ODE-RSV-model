@@ -623,6 +623,57 @@ format_weights = function(data, model_input) {
   return(weight_df)
 }
 
+# ---------------------------------------------------------------- -
+# Summarise where a round's parameter sets sit within their priors ----
+# ---------------------------------------------------------------- -
+# Diagnostic for "are the prior bounds sensible?". Reports the DISTRIBUTION of
+# the sampled sets, not the single best-fitting one: the best set is one draw
+# from a noisy search and routinely sits in the tail of its own distribution, so
+# judging a prior by whether the argmax landed near a bound is unreliable.
+#
+# Returns, per parameter, the position of the sample median/quartiles within the
+# prior range (0 = lower bound, 1 = upper) plus the share of samples in the
+# outer 5% at each end. A prior is only worth widening if a real share of the
+# MASS piles up against one end - not because one sample did.
+posterior_summary = function(o, cc, r_idx = NULL) {
+
+  pth = paste0("output/1_calibration/", cc, "/")
+  fit = try_load(pth, "fit_result", throw_error = FALSE)
+  if (is.null(fit)) return(NULL)
+
+  # Default to the last round ACTUALLY RUN for this fit. NB do not just take the
+  # highest-numbered r*_samples file on disk: a previous run with more rounds
+  # leaves stale files behind, and those would silently be reported instead.
+  if (is.null(r_idx)) {
+    if (is.null(fit$likelihoods) || !"round" %in% names(fit$likelihoods)) return(NULL)
+    r_idx = paste0("r", max(fit$likelihoods$round, na.rm = TRUE))
+  }
+  s = try_load(pth, paste0(r_idx, "_samples"), throw_error = FALSE)
+  if (is.null(s)) return(NULL)
+
+  bd = data.frame(param = fit$params, fit$bounds)
+  do.call(rbind, lapply(fit$params, function(prm) {
+    v  = s[[prm]]
+    lo = bd$lower[bd$param == prm]; hi = bd$upper[bd$param == prm]
+
+    # Position is measured on the LOG scale, because sample_parameters draws the
+    # initial Latin hypercube in log10 space. On a wide prior such as k = [1, 100]
+    # a linear position is misleading: the log-uniform median (k = 10) sits at a
+    # linear position of only 0.09, which looks like "piled up against the floor"
+    # when it is simply the middle of the prior.
+    use_log = is.finite(lo) && lo > 0 && is.finite(hi) && hi > lo
+    pos = if (use_log) (log(v) - log(lo)) / (log(hi) - log(lo)) else (v - lo) / (hi - lo)
+
+    data.frame(iso = cc, round = r_idx, param = prm, scale = ifelse(use_log, "log", "lin"),
+               q25 = round(quantile(pos, .25, names = FALSE), 3),
+               med = round(median(pos), 3),
+               q75 = round(quantile(pos, .75, names = FALSE), 3),
+               frac_low  = round(mean(pos < 0.05), 3),   # share of MASS at each end
+               frac_high = round(mean(pos > 0.95), 3),
+               at_bound  = sum(v == lo | v == hi))       # exact hits => clamping
+  }))
+}
+
 # -------------------------------------------------------- -
 # Create consistent IDs for parameter sets ----
 # -------------------------------------------------------- -
