@@ -216,7 +216,17 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   
   # Seed the initial infection
   states = initiate_epidemic(p, verbose)
-  
+
+  # Name vectors for the auxiliary ODE outputs. These become the output column
+  # names in the deSolve result, and are constant, so build them once here rather
+  # than with paste0() on every derivative evaluation (~5,500 times per solve).
+  p$nm_incidence_A     = paste0("incidence_A_",           p$age_groups)
+  p$nm_cases_A         = paste0("cases_A_",               p$age_groups)
+  p$nm_hosp_adm_A      = paste0("hospital_admissions_A_", p$age_groups)
+  p$nm_deaths          = paste0("deaths_",                p$age_groups)
+  p$nm_inc_prop_vacc   = paste0("incidence_prop_vacc_",   p$age_groups)
+  p$nm_hosp_prop_vacc  = paste0("hosp_prop_vacc_",        p$age_groups)
+
   # make sure all event days are integers
   p[grepl('_day',names(p))] <- lapply(p[grepl('_day',names(p))],round)
   
@@ -540,15 +550,25 @@ rsv_model = function(t, y, p){
     }
 
     derivatives <- c(derivatives)
-    names(derivatives) <- paste0("d", rep(extract_states, each = p$n_age), "_", p$age_groups)
 
-    names(incidence_A)          = paste0("incidence_A",          "_", p$age_groups)
-    names(cases_A)              = paste0("cases_A",              "_", p$age_groups)
-    names(hospital_admissions_A)= paste0("hospital_admissions_A","_", p$age_groups)
-    names(deaths)               = paste0("deaths",               "_", p$age_groups)
-    names(incidence_prop_vacc)  = paste0("incidence_prop_vacc",  "_", p$age_groups)
-    names(hosp_prop_vacc)       = paste0("hosp_prop_vacc",       "_", p$age_groups)
-    names(seasonality_factor)   = "seasonality_factor"
+    # NB: the derivative vector is deliberately left UNNAMED. deSolve reads it
+    # positionally (REAL(VECTOR_ELT(ans, 0))) and takes the state column names
+    # from names(y), set once in initiate_epidemic(); the output-column names it
+    # derives come from attr(unlist(tmp[-1]), "names"), which excludes element 1.
+    # Naming it therefore built a 2,450-element character vector on every one of
+    # ~5,500 derivative calls and threw it away - measurably ~6-8% of a model()
+    # call. Do not reinstate it.
+    #
+    # The auxiliary outputs below DO need names (those become output columns),
+    # but the name vectors are constant, so they are built once in model() and
+    # simply attached here.
+    names(incidence_A)           = p$nm_incidence_A
+    names(cases_A)               = p$nm_cases_A
+    names(hospital_admissions_A) = p$nm_hosp_adm_A
+    names(deaths)                = p$nm_deaths
+    names(incidence_prop_vacc)   = p$nm_inc_prop_vacc
+    names(hosp_prop_vacc)        = p$nm_hosp_prop_vacc
+    names(seasonality_factor)    = "seasonality_factor"
 
     return(list(derivatives,
                 incidence_A,
@@ -845,298 +865,110 @@ initiate_epidemic = function(p, verbose){
 # ---------------------------------------------------------
 # Prepare final model output
 # ---------------------------------------------------------
+# Reshape the wide deSolve output (n_times x ~2,660 columns) into the long
+# time / age_group / value / metric / variant table the rest of the pipeline uses.
+#
+# PERFORMANCE NOTE. This previously ran 14 near-identical
+#     pivot_longer -> mutate(regex + factor) -> group_by -> summarise
+# passes. pivot_longer(cols = all_of(x)) does NOT drop the unselected columns: it
+# keeps the other ~2,500 wide columns as id columns and REPLICATES every one of
+# them once per pivoted row. Across 14 passes that materialised ~2e9 doubles of
+# pure duplication (peaking near 6 GB) to produce ~210k useful rows - about 30% of
+# a model() call. Worse, calibration runs 11 of these concurrently, so the memory
+# pressure was also what held the effective parallel speed-up to ~1.6x, not ~11x.
+#
+# The aggregation is only ever "sum a fixed set of columns within each age group",
+# i.e. a fixed compartment -> age-group mapping. Done directly on the numeric
+# matrix it is arithmetically identical and ~75x faster.
+#
+# Behaviour deliberately preserved: metric order, row order (time-major, then
+# p$age_groups order), age_group as character, variant labels, and the na.rm
+# setting per metric (only 'susceptibles' ever used na.rm = TRUE).
 format_output = function(out_df, p) {
-  
-  #---- Susceptibles ----
-  # Select susceptible columns
-  S_cols = c(outer(c("S0_", "S1_", "S2_", "S3_"), p$age_groups, paste0)) %>% as.vector()
-  
-  # Summarise susceptibles by age group and time
-  S_df = out_df %>% pivot_longer(cols = all_of(S_cols),
-                                 names_to = "compartment",
-                                 values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val, na.rm =TRUE),
-              .groups = "drop") %>%
-    mutate(metric = "susceptibles",
-           variant = NA_character_)  # Susceptible compartment not disaggregated by variant
-  
-  #---- New infections (incidence) ----
-  # Select incidence columns
-  new_A_cols = c(outer("incidence_A_", p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise incidence by variant, age group and time
-  new_A_df = out_df %>% pivot_longer(cols = all_of(new_A_cols),
-                                     names_to = "compartment",
-                                     values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "new_infections",
-           variant = "A") 
-  
-  #---- Proportion of incidence in vaccinated individuals ----
-  # The per-age fraction of new infections occurring in vaccinated individuals.
-  # Used in results_evaluation to split burden into vaccinated / unvaccinated
-  # streams for the RespiCompass submission format.
-  incidence_prop_vacc_cols = c(outer("incidence_prop_vacc_", p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise incidence in vaccinated by variant, age group and time
-  incidence_prop_vacc_df = out_df %>% pivot_longer(cols = all_of(incidence_prop_vacc_cols),
-                                       names_to = "compartment",
-                                       values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "incidence_prop_vacc",
-           variant = "A")
 
-  #---- Proportion of hospital admissions in vaccinated individuals ----
-  # Distinct from incidence_prop_vacc: vaccinated infecteds have a lower
-  # hospitalisation probability (VE against severity), so their share of
-  # admissions differs from their share of infections. Used in
-  # results_evaluation to split the hospital burden into vacc / unvacc streams.
-  hosp_prop_vacc_cols = c(outer("hosp_prop_vacc_", p$age_groups, paste0)) %>%
-    as.vector()
+  ages = p$age_groups
+  n_a  = length(ages)
 
-  hosp_prop_vacc_df = out_df %>% pivot_longer(cols = all_of(hosp_prop_vacc_cols),
-                                       names_to = "compartment",
-                                       values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "hosp_prop_vacc",
-           variant = "A")
-  
-  #---- Confirmed cases (ILI+) ----
-  # Select incidence columns
-  cases_A_cols = c(outer("cases_A_", p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise incidence by variant, age group and time
-  cases_A_df = out_df %>% pivot_longer(cols = all_of(cases_A_cols),
-                                       names_to = "compartment",
-                                       values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "cases",
-           variant = "A") 
-  
-  
-  #---- Latent (pre-infectious) ----
-  # Select latent (pre-infectious) columns — includes vaccinated exposed streams (E_kv)
-  E_A_cols = c(outer(c("E0_", "E0v_", "E1_", "E1v_", "E2_", "E2v_", "E3_", "E3v_"), p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise latent (pre-infectious) by age group and time
-  E_A_df = out_df %>%  pivot_longer(cols = all_of(E_A_cols),
-                                    names_to = "compartment",
-                                    values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "latent",
-           variant = "A") 
-  
-  #---- Infectious ----
-  # Select infectious columns — includes vaccinated infectious streams (I_kv)
-  I_A_cols = c(outer(c("I0_", "I0v_", "I1_", "I1v_", "I2_", "I2v_", "I3_", "I3v_"), p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise infectious by age group and time
-  I_A_df = out_df %>%  pivot_longer(cols = all_of(I_A_cols),
-                                    names_to = "compartment",
-                                    values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "infectious",
-           variant = "A") 
-  
-  #---- Hospital occupancy----
-  # Select hospitalised columns
-  H_cols = c(outer(c("H0_", "H1_", "H2_", "H3_"), p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise hospitalised by age group and time
-  H_df = out_df %>% pivot_longer(cols = all_of(H_cols),
-                                 names_to = "compartment",
-                                 values_to = "val") %>%
-    
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "hospital_occupancy",
-           variant = NA_character_) # Hospitalised compartment not disaggregated by variant
-  
-  #---- Hospital admissions ----
-  # Select hospital admissions columns
-  admit_A_cols = c(outer("hospital_admissions_A_", p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise hospital admissions by variant, age group and time
-  admit_A_df = out_df %>%  pivot_longer(cols = all_of(admit_A_cols),
-                                        names_to = "compartment",
-                                        values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "hospital_admissions",
-           variant = "A") 
-  
-  #---- Recovered ----
-  # Select recovered columns
-  R_cols = c(outer(c("R0_", "R1_", "R2_", "R3_"), p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise receovered by age group and time
-  R_df = out_df %>% pivot_longer(cols = all_of(R_cols),
-                                 names_to = "compartment",
-                                 values_to = "val") %>%
-    
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "recovered",
-           variant = NA_character_) # Recovered compartment not disaggregated by variant
-  
-  #---- Deceased ----
-  # Select deceased columns (cumulative deaths)
-  D_cols = c(outer(c("D0_", "D1_", "D2_", "D3_"), p$age_groups, paste0)) %>%
-    as.vector()
-  
-  D_df = out_df %>% pivot_longer(cols = all_of(D_cols),
-                                 names_to = "compartment",
-                                 values_to = "val") %>%
-    
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "deceased",
-           variant = NA_character_) # Deceased compartment not disaggregated by variant
-  
-  #---- Vaccinated ----
-  # Select vaccinated columns: infant stream (V0) + all adult waning stages (V1_j, V2_j, V3_j)
-  V_cols = c(
-    outer("V0_", p$age_groups, paste0),
-    outer(paste0("V1_", seq_len(p$W), "_"), p$age_groups, paste0),
-    outer(paste0("V2_", seq_len(p$W), "_"), p$age_groups, paste0),
-    outer(paste0("V3_", seq_len(p$W), "_"), p$age_groups, paste0)
-  ) %>% as.vector()
-  
-  V_df = out_df %>% pivot_longer(cols = all_of(V_cols),
-                                 names_to = "compartment",
-                                 values_to = "val") %>%
-    
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "vaccinated",
-           variant = NA_character_) # Deceased compartment not disaggregated by variant
+  # ---- Column groups per metric ----
+  Vpre = c("V0_",
+           paste0("V1_", seq_len(p$W), "_"),
+           paste0("V2_", seq_len(p$W), "_"),
+           paste0("V3_", seq_len(p$W), "_"))
 
-  #---- Doses administered (cumulative) ----
-  # Cumulative vaccine doses (infant routine + infant catch-up + adult campaign),
-  # incremented by the ageing event. Difference over time for doses per period.
-  ndoses_cols = c(outer("n_doses_", p$age_groups, paste0)) %>%
-    as.vector()
+  spec = list(
+    list(m = "susceptibles",        v = NA_character_, na_rm = TRUE,  pre = c("S0_","S1_","S2_","S3_")),
+    list(m = "new_infections",      v = "A",           na_rm = FALSE, pre = "incidence_A_"),
+    list(m = "incidence_prop_vacc", v = "A",           na_rm = FALSE, pre = "incidence_prop_vacc_"),
+    list(m = "hosp_prop_vacc",      v = "A",           na_rm = FALSE, pre = "hosp_prop_vacc_"),
+    list(m = "cases",               v = "A",           na_rm = FALSE, pre = "cases_A_"),
+    list(m = "latent",              v = "A",           na_rm = FALSE,
+         pre = c("E0_","E0v_","E1_","E1v_","E2_","E2v_","E3_","E3v_")),
+    list(m = "infectious",          v = "A",           na_rm = FALSE,
+         pre = c("I0_","I0v_","I1_","I1v_","I2_","I2v_","I3_","I3v_")),
+    list(m = "hospital_admissions", v = "A",           na_rm = FALSE, pre = "hospital_admissions_A_"),
+    list(m = "hospital_occupancy",  v = NA_character_, na_rm = FALSE, pre = c("H0_","H1_","H2_","H3_")),
+    list(m = "recovered",           v = NA_character_, na_rm = FALSE, pre = c("R0_","R1_","R2_","R3_")),
+    list(m = "deceased",            v = NA_character_, na_rm = FALSE, pre = c("D0_","D1_","D2_","D3_")),
+    list(m = "vaccinated",          v = NA_character_, na_rm = FALSE, pre = Vpre),
+    list(m = "n_doses",             v = NA_character_, na_rm = FALSE, pre = "n_doses_"),
+    list(m = "deaths",              v = NA_character_, na_rm = FALSE, pre = "deaths_")
+  )
 
-  ndoses_df = out_df %>% pivot_longer(cols = all_of(ndoses_cols),
-                                      names_to = "compartment",
-                                      values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "n_doses",
-           variant = NA_character_) # Doses not disaggregated by variant
+  # ---- Numeric matrix + one name->position lookup ----
+  M    = as.matrix(out_df)
+  cn   = colnames(M)
+  cpos = setNames(seq_along(cn), cn)
+  tvec = out_df$time
+  n_t  = length(tvec)
 
+  # ---- Per-metric aggregation: sum the metric's columns within each age group ----
+  blocks = lapply(spec, function(sp) {
+    vals = vapply(ages, function(a) {
+      idx = cpos[paste0(sp$pre, a)]
+      idx = idx[!is.na(idx)]
+      if (!length(idx)) return(rep(NA_real_, n_t))
+      if (length(idx) == 1L) {
+        x = M[, idx]
+        if (sp$na_rm) x[is.na(x)] = 0
+        x
+      } else {
+        rowSums(M[, idx, drop = FALSE], na.rm = sp$na_rm)
+      }
+    }, numeric(n_t))
+    if (is.null(dim(vals))) vals = matrix(vals, nrow = n_t, ncol = n_a)
 
-  #---- Deaths ----
-  # Select death columns
-  death_cols = c(outer("deaths_", p$age_groups, paste0)) %>%
-    as.vector()
-  
-  # Summarise hospital admissions by variant, age group and time
-  deaths_df = out_df %>%  pivot_longer(cols = all_of(death_cols),
-                                       names_to = "compartment",
-                                       values_to = "val") %>%
-    mutate(age_group = sub(".*_", "", compartment),
-           age_group = factor(age_group, levels = p$age_groups)) %>%  # Extract age group number from compartment name
-    group_by(time, age_group) %>%
-    summarise(value = sum(val),
-              .groups = "drop") %>%
-    mutate(metric = "deaths")
-  
-  
+    # t() so the result is time-major (all ages for t1, then all ages for t2, ...),
+    # matching the ordering group_by(time, age_group) produced before.
+    data.table(time      = rep(tvec, each  = n_a),
+               age_group = rep(ages, times = n_t),
+               value     = as.vector(t(vals)),
+               metric    = sp$m,
+               variant   = sp$v)
+  })
+
+  m = rbindlist(blocks)
+
   #---- Seasonality ----
-  # NB: This is an input, not an output, but is helpful for visualisation
-  seasonality = out_df %>% select(time, seasonality_factor) %>%
-    rename(value = seasonality_factor) %>%
-    mutate(metric = "seasonality",
-           age_group = NA_character_,
-           variant = NA_character_) %>%
-    select(time, age_group, value, metric, variant)
-  
-  # Compile output
-  m = bind_rows(S_df,
-                new_A_df,
-                incidence_prop_vacc_df,
-                hosp_prop_vacc_df,
-                cases_A_df,
-                E_A_df,
-                I_A_df,
-                admit_A_df,
-                H_df,
-                R_df,
-                D_df,
-                V_df,
-                ndoses_df,
-                deaths_df,
-                seasonality)
-  
+  # NB: an input rather than an output, but useful for visualisation.
+  seasonality = data.table(time      = tvec,
+                           age_group = NA_character_,
+                           value     = as.numeric(out_df$seasonality_factor),
+                           metric    = "seasonality",
+                           variant   = NA_character_)
+  m = rbindlist(list(m, seasonality))
+
   #---- Total living population ----
-  # Define the subset of metrics to be summed
-  pop_metrics = c("susceptibles", "latent", "infectious", "hospital_occupancy", "recovered", "vaccinated")  
-  
-  # Compute 'total' as the sum of the selected metrics within each age group
+  pop_metrics = c("susceptibles", "latent", "infectious",
+                  "hospital_occupancy", "recovered", "vaccinated")
+
   pop_total = m %>%
-    filter(metric %in% pop_metrics) %>%  # Keep only the relevant metrics
-    group_by(time, age_group) %>%  # Sum within each age group
+    filter(metric %in% pop_metrics) %>%
+    group_by(time, age_group) %>%
     summarise(metric = "total", value = sum(value, na.rm = TRUE), .groups = "drop")
-  
-  overall_total = pop_total %>% group_by(time) %>% summarise(value = sum(value))
-  
+
   m = bind_rows(m, pop_total) %>%
     setDT()
-  
+
   return(m)
 }
 
