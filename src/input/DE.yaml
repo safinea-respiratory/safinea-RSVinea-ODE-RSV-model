@@ -112,7 +112,7 @@ calibration_parameters:
   upper: 200
 - param: "peak_day"
   lower: 90
-  upper: 110
+  upper: 150
 - param: "amplitude"
   lower: 0.16
   upper: 0.24

@@ -93,8 +93,8 @@ calibration_parameters:
   lower: 0.066
   upper: 0.086
 - param: "p_hosp_A"
-  lower: 0.000050
-  upper: 0.000072
+  lower: 0.000035
+  upper: 0.000100
 - param: "init_inf"
   lower: 0.08
   upper: 0.45
@@ -112,7 +112,7 @@ calibration_parameters:
   upper: 200
 - param: "peak_day"
   lower: 100
-  upper: 120
+  upper: 160
 - param: "amplitude"
   lower: 0.16
   upper: 0.24
