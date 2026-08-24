@@ -156,10 +156,13 @@ adjust_age_specific_param = function(param_data){
   param_data$qi_c <- param_data$beta_A * param_data$rel_sus_c
   param_data$qi_d <- param_data$beta_A 
   
-  param_data$p_hosp_a <- param_data$p_hosp_A * param_data$rel_hosp_a_A
-  param_data$p_hosp_b <- param_data$p_hosp_A * param_data$rel_hosp_b_A
-  param_data$p_hosp_c <- param_data$p_hosp_A * param_data$rel_hosp_c_A
-  param_data$p_hosp_d <- param_data$p_hosp_A 
+  # These are now absolute probabilities set directly by their own parameter,
+  # so there is no longer a p_hosp_A multiplier to apply (see age_relativity()
+  # in model.R). p_hosp_d remains the 5-18y / 18-60y baseline.
+  param_data$p_hosp_a <- param_data$p_hosp_a_A
+  param_data$p_hosp_b <- param_data$p_hosp_b_A
+  param_data$p_hosp_c <- param_data$p_hosp_c_A
+  param_data$p_hosp_d <- param_data$p_hosp_A
   
   param_data$p_death_a <- param_data$p_death * param_data$rel_death_a
   param_data$p_death_b <- param_data$p_death * param_data$rel_death_b

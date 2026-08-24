@@ -201,14 +201,25 @@ p_confirm_hosp_A: 1   # Confirmation rate for hospitalisations caused by strain 
 p_confirm_death: 1    # Confirmation rate for deaths 
 
 # ---- Hospitalisation rate ----
-p_hosp_A: 0.0458 # Probability of severe disease requiring hospitalisation, given infection with strain A, in  oldest age group
+# Probability of hospitalisation given infection with strain A, for the bands
+# with no parameter of their own: 5-18y and 18-60y. NB this is NOT the oldest
+# age group (which uses p_hosp_c_A below) and is no longer a global multiplier.
+p_hosp_A: 0.0458
 
-# Age-dependent multipliers on p_hosp_A (see compute_p_hosp_A_row in model.R).
-rel_hosp_a_A: 50 # Infant amplitude (0-3m; 3-6m/6-12m derived from burden ratios)
-rel_hosp_b_A: 20 # Young-child amplitude (1-5y)
-rel_hosp_c_A: 10 # Older-adult amplitude, anchored at 60-64y = 1.0; the per-band
-                 # gradient across 60-64y..80+y is derived at runtime from the
-                 # observed burden / population (population-normalised rate ratio).
+# Age-specific hospitalisation probabilities (see compute_p_hosp_A_row in model.R).
+# These are ABSOLUTE probabilities of hospitalisation given infection, NOT
+# multipliers on p_hosp_A. Each one is the probability of its ANCHOR band; the
+# other bands in its group follow via data-derived shape factors:
+#   p_hosp_a_A -> 0-3m    (3-6m and 6-12m follow via the infant burden ratios)
+#   p_hosp_b_A -> 1-5y
+#   p_hosp_c_A -> 60-64y  (65-69y..80+y follow via elderly_shape, derived at
+#                          runtime from observed burden / population)
+#   p_hosp_A   -> 5-18y and 18-60y (above)
+# Values below are placeholders of the right order of magnitude; every fitted
+# run overrides them from the calibration_parameters bounds in the country yaml.
+p_hosp_a_A: 0.06    # 0-3m
+p_hosp_b_A: 0.004   # 1-5y
+p_hosp_c_A: 0.0006  # 60-64y anchor
 
 # ---- Mortality rate ----
 p_death: 0.0 # Proportion of hospitalisations resulting in death

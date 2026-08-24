@@ -72,15 +72,15 @@ calibration_parameters:
 - param: "seasonality_exponent"
   lower: 0.5
   upper: 2.0
-- param: "rel_hosp_a_A"
-  lower: 400
-  upper: 650
-- param: "rel_hosp_b_A"
-  lower: 35
-  upper: 50
-- param: "rel_hosp_c_A"
-  lower: 5
-  upper: 12
+- param: "p_hosp_a_A"
+  lower: 0.044
+  upper: 0.0845
+- param: "p_hosp_b_A"
+  lower: 0.00385
+  upper: 0.0065
+- param: "p_hosp_c_A"
+  lower: 0.00055
+  upper: 0.00156
 - param: "beta_A"
   lower: 0.060
   upper: 0.085

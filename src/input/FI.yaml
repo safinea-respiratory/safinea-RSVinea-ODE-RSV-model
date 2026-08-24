@@ -8,9 +8,9 @@
 # bounds, data source settings, and vaccination parameters.
 #
 # Calibration prior bounds are carried over from the RespiCompass 2025/2026 round
-# for this country. NB: rel_hosp_c_A has been RESCALED for the new model, which
+# for this country. NB: p_hosp_c_A has been RESCALED for the new model, which
 # multiplies it by the data-derived elderly_shape (normalised to 60-64y = 1.0):
-#   rel_hosp_c_A_new = rel_hosp_c_A_old / shape_bar,  shape_bar(FI) = 6.062967
+#   p_hosp_c_A_new = p_hosp_c_A_old / shape_bar,  shape_bar(FI) = 6.062967
 # where shape_bar is the 65+ hospitalisation rate relative to the 60-64y rate,
 # computed from the RespiCompass burden and population data. Bounds are then
 # widened by -25%/+25% since these priors come from a different model and season.
@@ -80,15 +80,15 @@ calibration_parameters:
 - param: "seasonality_exponent"
   lower: 0.5
   upper: 2.0
-- param: "rel_hosp_a_A"
-  lower: 1800
-  upper: 2500
-- param: "rel_hosp_b_A"
-  lower: 110
-  upper: 180
-- param: "rel_hosp_c_A"
-  lower: 16.70   # rescaled from old 135-150 by shape_bar=6.062967, widened +/-25%
-  upper: 30.93
+- param: "p_hosp_a_A"
+  lower: 0.027
+  upper: 0.075
+- param: "p_hosp_b_A"
+  lower: 0.00165
+  upper: 0.0054
+- param: "p_hosp_c_A"
+  lower: 0.0002505
+  upper: 0.0009279
 - param: "beta_A"
   lower: 0.050
   upper: 0.075

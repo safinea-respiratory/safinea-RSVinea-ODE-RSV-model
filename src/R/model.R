@@ -1049,8 +1049,8 @@ age_relativity = function(p){
   # observed burden DIVIDED BY population per band (a hospitalisation RATE), then
   # normalised to 60-64y = 1.0. Unlike the infant bands (similar sizes), the
   # elderly 5-year bands have very different populations, so we must normalise by
-  # population, not use raw burden ratios. This shape multiplies rel_hosp_c_A (the
-  # calibratable elderly amplitude anchored at 60-64y) in compute_p_hosp_A_row().
+  # population, not use raw burden ratios. This shape multiplies p_hosp_c_A (the
+  # calibratable elderly probability anchored at 60-64y) in compute_p_hosp_A_row().
   # If burden data is degenerate/missing, fall back to a literature gradient
   # (Spain population cohort & US RSV-NET: ~2-3-4-6 fold at 70/75/80/85 vs 60-64).
   elderly_bands <- c("60-65y", "65-70y", "70-75y", "75-80y", "80+y")
@@ -1132,7 +1132,10 @@ age_relativity = function(p){
   # pair. Draws fresh rnorm() values per call — see TODO below.
   compute_p_hosp_A_row = function(ratio1, ratio2) {
     p$age_group_map %>%
-      mutate(p_hosp_A = p$p_hosp_A) %>% # Baseline = oldest age-group hosp risk
+      # Baseline p_hosp_A applies to the bands with no parameter of their own:
+      # 5-18y and 18-60y (the TRUE branch of the case_when below). It is NOT a
+      # global multiplier - every other band sets its own absolute probability.
+      mutate(p_hosp_A = p$p_hosp_A) %>%
       select(-smaller_group) %>%
       group_by(larger_group) %>%
       slice(1) %>%   # Keep just 'larger groups'
@@ -1144,15 +1147,31 @@ age_relativity = function(p){
       # NB: these rnorm() draws are re-sampled on every model() call, so a fit is
       # NOT reproducible for a given parameter set — seed them (or route through
       # the yaml `uncertainty:` block) if you need reproducibility.
-      # Elderly bands get rel_hosp_c_A (calibratable amplitude, anchored at
-      # 60-64y = 1.0) times the data-derived population-normalised shape.
+      # Each age group's hospitalisation probability is set DIRECTLY by its own
+      # parameter, in absolute terms - there is no shared multiplier. Formerly
+      # these were relative amplitudes (rel_hosp_*_A) multiplying p_hosp_A,
+      # which meant p_hosp_A moved all eleven bands at once: a band could only
+      # be adjusted independently across the span of its own multiplier (for
+      # 0-3m that was +/-8%), and anything larger required moving p_hosp_A and
+      # compensating in every other band. Each parameter below is the absolute
+      # P(hosp | infection) of its ANCHOR band:
+      #   p_hosp_a_A  -> 0-3m   (3-6m and 6-12m follow via the burden ratios)
+      #   p_hosp_b_A  -> 1-5y
+      #   p_hosp_c_A  -> 60-64y (other elderly bands follow via elderly_shape)
+      #   p_hosp_A    -> 5-18y and 18-60y (the TRUE branch)
+      # The data-derived shape factors (ratio1, ratio2, elderly_shape) and the
+      # +/-3% jitter are unchanged: this is a change of coordinates, not of the
+      # model. NB the elderly anchor 60-64y carries the jitter (shape = 1.0 but
+      # still multiplied by 1 + N(0, 0.03)), whereas the infant anchor 0-3m does
+      # not - so p_hosp_c_A is the 60-64y probability in expectation, while
+      # p_hosp_a_A is exactly the 0-3m probability.
       mutate(eld_mult = unname(elderly_shape[larger_group]),
              p_hosp_A = case_when(
-        larger_group %in% c("0-3m")  ~ p_hosp_A * p$rel_hosp_a_A,
-        larger_group %in% c("3-6m")  ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio1,
-        larger_group %in% c("6-12m") ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio2,
-        larger_group %in% c("1-5y")  ~ p_hosp_A * p$rel_hosp_b_A,
-        !is.na(eld_mult)             ~ p_hosp_A * p$rel_hosp_c_A * eld_mult * (1 + rnorm(length(larger_group), 0, 0.03)),
+        larger_group %in% c("0-3m")  ~ p$p_hosp_a_A,
+        larger_group %in% c("3-6m")  ~ p$p_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio1,
+        larger_group %in% c("6-12m") ~ p$p_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio2,
+        larger_group %in% c("1-5y")  ~ p$p_hosp_b_A,
+        !is.na(eld_mult)             ~ p$p_hosp_c_A * eld_mult * (1 + rnorm(length(larger_group), 0, 0.03)),
         TRUE ~ p_hosp_A)) %>%
       select(-eld_mult) %>%
       # Map hospitalisation risk back to fine age groups
@@ -1186,8 +1205,8 @@ age_relativity = function(p){
   # Hard check: every p_hosp_A entry must be a valid probability in [0, 1].
   # With the fallback ladder above the ratios going into compute_p_hosp_A_row
   # are always finite and non-zero, so the matrix can't contain Inf/NaN.
-  # The remaining failure modes are configuration-driven: e.g. the yaml
-  # combination p_hosp_A * rel_hosp_*_A exceeds 1, or rnorm() flips sign.
+  # The remaining failure modes are configuration-driven: e.g. a yaml value of
+  # p_hosp_{a,b,c}_A exceeds 1, or rnorm() flips sign.
   # Stop with a pointer to the offending (season, age_group) cell so the
   # user can fix the yaml rather than silently feed a non-probability into
   # the ODE.
@@ -1201,14 +1220,15 @@ age_relativity = function(p){
          " (season, age_group) cell(s). First offender: season ",
          bad_seasons[1], ", age_group ", bad_ages[1],
          ", p_hosp_A = ", signif(bad_vals[1], 4),
-         ". Check yaml: p_hosp_A * rel_hosp_*_A must produce probabilities ",
-         "in [0, 1] (e.g. for 0-3m, p_hosp_A * rel_hosp_a_A <= 1).")
+         ". Check yaml: p_hosp_{a,b,c}_A and p_hosp_A are absolute ",
+         "probabilities and must each lie in [0, 1] (e.g. p_hosp_a_A is the ",
+         "0-3m probability directly, not a multiplier).")
   }
   if (any(p$p_hosp_A_fallback < 0 | p$p_hosp_A_fallback > 1)) {
     bad = which(p$p_hosp_A_fallback < 0 | p$p_hosp_A_fallback > 1)
     stop("age_relativity(): pooled-fallback p_hosp_A outside [0, 1] for ",
          "age_group(s): ", paste(p$age_groups[bad], collapse = ", "),
-         ". Check baseline p_hosp_A and rel_hosp_*_A in the yaml.")
+         ". Check p_hosp_A and p_hosp_{a,b,c}_A in the yaml.")
   }
   
   # Keep p$p_hosp_A as a scalar-vector default (the pooled fallback) for

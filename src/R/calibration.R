@@ -269,8 +269,9 @@ sample_parameters = function(o, fit, r_val) {
     # A fixed percentage step (previously sd = 0.02) is the wrong radius, because
     # a fixed % of a parameter's VALUE says nothing about how uncertain we are
     # about that parameter. Measured on real output, 2% was ~30% of the plausible
-    # range for rel_hosp_a_A but only ~0.4% of it for k - leaving k effectively
-    # frozen while rel_hosp_a_A regularly overshot its bounds.
+    # range for the infant hospitalisation parameter (then rel_hosp_a_A, now
+    # p_hosp_a_A) but only ~0.4% of it for k - leaving k effectively frozen
+    # while the infant parameter regularly overshot its bounds.
     #
     # Instead take the step size from the SPREAD of the resampled particles for
     # each parameter: that spread is the current estimate of its uncertainty, so
