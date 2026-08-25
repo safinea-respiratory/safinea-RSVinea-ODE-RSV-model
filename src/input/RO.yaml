@@ -27,7 +27,7 @@
 # Number of days to simulate
 # This must be at least the sum of the burn-in period and the fitting dates.
 # Covers the RespiCompass 2026/2027 modelling period (2026-09-01 onwards).
-n_days: 400
+n_days: 730
 
 # Transmission rate at baseline susceptibility (defined as oldest age group) and seasonal maximum
 beta_A: 0.012 # transmission rate
