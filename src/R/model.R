@@ -230,12 +230,30 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # make sure all event days are integers
   p[grepl('_day',names(p))] <- lapply(p[grepl('_day',names(p))],round)
   
+  # ---- Effective simulation horizon ----
+  # Calibration sets o$limit_n_days to the number of days needed to reach the
+  # last data point (see run_calibration). Nothing past that can change the
+  # likelihood, so we clamp the solve to it. Two things this buys:
+  #   1. Cost. The ODE solve dominates runtime and scales with the horizon, so a
+  #      yaml n_days of 730 (set for two-year SCENARIO projections) would
+  #      otherwise make every calibration simulation ~2x more expensive.
+  #   2. Correctness. aggregate_model_output() builds the data_freq == "total"
+  #      targets by summing model output over EVERY simulated day, with no date
+  #      restriction. The RespiCompass age-band burden targets are single-season
+  #      totals, so simulating two seasons would compare a two-season model sum
+  #      against a one-season observation and roughly double the modelled burden.
+  # o$limit_n_days is set only during calibration, so scenario runs are
+  # unaffected and still use the full n_days from the yaml.
+  n_days_eff = p$n_days
+  if (!is.null(o$limit_n_days) && is.finite(o$limit_n_days))
+    n_days_eff = min(p$n_days, o$limit_n_days)
+
   # Define times to have an ageing event (first day of each month within the
   # simulation window). Events are computed here from the data start date and
-  # n_days, so they follow the simulation period automatically.
+  # the effective horizon, so they follow the simulation period automatically.
   p$start_date = min(dates_df$date)
   start_date <- p$start_date
-  end_date   <- p$start_date + p$n_days
+  end_date   <- p$start_date + n_days_eff
   from <- if_else(day(start_date) == 1, # if the first day is start of the month
                   floor_date(start_date, "month"),
                   ceiling_date(start_date, "month"))
@@ -264,7 +282,7 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # Solver method is set in options.R (o$ode_method) — see the note there on why
   # a sparse Jacobian ("lsodes") suits this model far better than a dense one.
   out = deSolve::ode(y = states,
-                     times = seq(1, p$n_days, by = 1),
+                     times = seq(1, n_days_eff, by = 1),
                      func = rsv_model,
                      p = p,
                      events = list(func = ageing_event, time = event_times),

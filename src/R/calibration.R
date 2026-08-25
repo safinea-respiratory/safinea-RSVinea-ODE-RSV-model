@@ -28,8 +28,22 @@ run_calibration = function(o) {
   # Load data - see load_data.R
   fit = load_data(o, fit)
   
-  # specify reference period, to limit the time horizon
-  o$limit_n_days <- as.numeric(diff(range(fit$data$date, na.rm = TRUE))+1)
+  # ---- Limit the simulated horizon to the fitting window ----
+  # During calibration nothing beyond the last data point can affect the
+  # likelihood, so simulating further is wasted work: the cost of model() is
+  # dominated by the ODE solve, which scales with n_days. Country yamls set
+  # n_days for the SCENARIO horizon (e.g. 730 for a two-year projection), which
+  # would otherwise make every calibration simulation twice as expensive for no
+  # gain. model() clamps to this value when it is set; it is not set anywhere
+  # else, so scenario runs still use the full n_days from the yaml.
+  #
+  # This is measured from the model's START DATE, not as the span of the data.
+  # The two differ whenever the data begins after the window opens - for AT the
+  # window starts 2026-09-01 but the first weekly data point is 2026-09-06, so
+  # the span is 357 days while the horizon needed to reach the last data point
+  # is 363. Using the span would silently truncate the final days of data.
+  o$limit_n_days <- as.numeric(max(fit$data$date, na.rm = TRUE) -
+                                 min(fit$dates_model$date)) + 1
   
   # specify reference metrics, to limit the model output
   o$fit_metrics <- get_fit_metrics(parse_yaml(o, scenario = "baseline")$parsed)
