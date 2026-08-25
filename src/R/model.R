@@ -1129,7 +1129,7 @@ age_relativity = function(p){
   ratio2_s = ratio2_fallback * ratio2_s/ratio2_s
 
   # Helper: build a length-n_age p_hosp_A vector from a (ratio1, ratio2)
-  # pair. Draws fresh rnorm() values per call — see TODO below.
+  # pair. DETERMINISTIC: the same parameters always give the same vector.
   compute_p_hosp_A_row = function(ratio1, ratio2) {
     p$age_group_map %>%
       # Baseline p_hosp_A applies to the bands with no parameter of their own:
@@ -1140,13 +1140,6 @@ age_relativity = function(p){
       group_by(larger_group) %>%
       slice(1) %>%   # Keep just 'larger groups'
       ungroup() %>%
-      # The DATA-DERIVED shape components carry a small mean-0 multiplicative
-      # jitter, 1 + N(0, 0.03): the infant 3-6m/6-12m burden-ratio scalings and
-      # the elderly population-normalised shape (one independent draw per band).
-      # The fixed amplitudes (0-3m, 1-5y) are not jittered.
-      # NB: these rnorm() draws are re-sampled on every model() call, so a fit is
-      # NOT reproducible for a given parameter set — seed them (or route through
-      # the yaml `uncertainty:` block) if you need reproducibility.
       # Each age group's hospitalisation probability is set DIRECTLY by its own
       # parameter, in absolute terms - there is no shared multiplier. Formerly
       # these were relative amplitudes (rel_hosp_*_A) multiplying p_hosp_A,
@@ -1159,19 +1152,30 @@ age_relativity = function(p){
       #   p_hosp_b_A  -> 1-5y
       #   p_hosp_c_A  -> 60-64y (other elderly bands follow via elderly_shape)
       #   p_hosp_A    -> 5-18y and 18-60y (the TRUE branch)
-      # The data-derived shape factors (ratio1, ratio2, elderly_shape) and the
-      # +/-3% jitter are unchanged: this is a change of coordinates, not of the
-      # model. NB the elderly anchor 60-64y carries the jitter (shape = 1.0 but
-      # still multiplied by 1 + N(0, 0.03)), whereas the infant anchor 0-3m does
-      # not - so p_hosp_c_A is the 60-64y probability in expectation, while
-      # p_hosp_a_A is exactly the 0-3m probability.
+      #
+      # The data-derived shape factors (ratio1, ratio2, elderly_shape) are applied
+      # DETERMINISTICALLY. They previously carried a 1 + N(0, 0.03) multiplicative
+      # jitter, redrawn on every model() call, which made the likelihood stochastic:
+      # the same parameter set scored differently each time, so the SMC resampling
+      # step partly selected on lucky draws rather than on fit, and no before/after
+      # comparison of a prior change was possible. It was also the ONLY thing making
+      # the rows of p_hosp_A_by_season differ, since the per-season ratios are
+      # collapsed to the pooled value above - so it manufactured random
+      # season-to-season jumps in severity rather than modelling real variation.
+      # And it perturbed the elderly anchor 60-64y, whose shape factor is exactly
+      # 1.0 by construction (it IS the normalisation point) and therefore carries
+      # no sampling error at all.
+      #
+      # Do NOT reintroduce per-call randomness here. If the sampling error in the
+      # shape factors needs representing, give it a parameter drawn once per
+      # parameter set, so it can be fitted, inspected, and held fixed on a re-run.
       mutate(eld_mult = unname(elderly_shape[larger_group]),
              p_hosp_A = case_when(
         larger_group %in% c("0-3m")  ~ p$p_hosp_a_A,
-        larger_group %in% c("3-6m")  ~ p$p_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio1,
-        larger_group %in% c("6-12m") ~ p$p_hosp_a_A * (1 + rnorm(1, 0, 0.03)) / ratio2,
+        larger_group %in% c("3-6m")  ~ p$p_hosp_a_A / ratio1,
+        larger_group %in% c("6-12m") ~ p$p_hosp_a_A / ratio2,
         larger_group %in% c("1-5y")  ~ p$p_hosp_b_A,
-        !is.na(eld_mult)             ~ p$p_hosp_c_A * eld_mult * (1 + rnorm(length(larger_group), 0, 0.03)),
+        !is.na(eld_mult)             ~ p$p_hosp_c_A * eld_mult,
         TRUE ~ p_hosp_A)) %>%
       select(-eld_mult) %>%
       # Map hospitalisation risk back to fine age groups
@@ -1206,7 +1210,7 @@ age_relativity = function(p){
   # With the fallback ladder above the ratios going into compute_p_hosp_A_row
   # are always finite and non-zero, so the matrix can't contain Inf/NaN.
   # The remaining failure modes are configuration-driven: e.g. a yaml value of
-  # p_hosp_{a,b,c}_A exceeds 1, or rnorm() flips sign.
+  # p_hosp_{a,b,c}_A exceeds 1, or a degenerate burden ratio flips the sign.
   # Stop with a pointer to the offending (season, age_group) cell so the
   # user can fix the yaml rather than silently feed a non-probability into
   # the ODE.
