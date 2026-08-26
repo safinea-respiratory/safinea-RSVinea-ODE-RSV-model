@@ -288,34 +288,36 @@ infant_vacc_IE_hosp: 0.90 # Overall VE against hospitalisation for infants (unco
 infant_vacc_coverage: 0.0
 
 # ---- Adult vaccine efficacy ----
-# PLACEHOLDER FIXME - replace with trial-derived estimates when available
-# Relative protection indexed by MONTHS SINCE VACCINATION: 1 = full protection
-# at the peak vaccine effect, decaying to 0 (fully waned) by month W. The vaccine
-# effect itself is scaled by adult_vacc_IE below; residual susceptibility is
-# immunity = 1 - adult_vacc_IE * rel_protection. Protection is therefore HIGHEST
-# just after vaccination (month 1) and wanes to nothing by month W.
+# ADULT VE IS NO LONGER SET HERE. It is read from the RespiCompass waning curves
+# (auxiliary-data/waning-immunity/waning_curves.csv, cached via o$waning_url),
+# which give ABSOLUTE VE against infection (VE_inf) and against severe disease
+# (VE_sev) by months since vaccination, as 500 replicate curves carrying the
+# uncertainty in the waning model. See get_waning_curve() in auxiliary.R.
 #
-# MUST have exactly W entries (validated in model.R).
+# The replicate is chosen DETERMINISTICALLY, never at random:
+#   - calibration      -> the median curve across all replicates
+#   - scenario run     -> fitting sample 1 uses rep 1, sample 2 uses rep 2, ...
+#                         (keyed on n_best_samples, so the number of waning
+#                          curves explored follows the number of fitted sets)
+# so a given simulation always reproduces exactly.
 #
-# W is the MAXIMUM immunity duration, i.e. the longest arm of the RespiCompass
-# 2026/2027 scenario grid (6 / 12 / 18 months). SHORTER durations are encoded by
-# overriding THIS CURVE in a scenario so it reaches 0 earlier (e.g. a 6-month
-# arm decays to 0 by month 6 and is 0 for months 7-18) — do NOT change W per
-# scenario, since W sets the number of model compartments.
-adult_vaccine_rel_protection: [
-  1.000, 0.941, 0.882, 0.824, 0.765, 0.706, # months 1-6
-  0.647, 0.588, 0.529, 0.471, 0.412, 0.353 # months 7-12
-]
-adult_vacc_IE: 0.80      # VE against acquisition for adults (PLACEHOLDER FIXME)
-adult_vacc_IE_hosp: 0.90 # Overall VE against hospitalisation for adults (unconditional, must be >= adult_vacc_IE; model derives conditional internally) (PLACEHOLDER FIXME)
+# The two scalars below are RETAINED but NO LONGER READ for adults, because the
+# file supplies absolute VE rather than an amplitude to scale. They are kept so
+# that existing country yamls and scenario overrides referencing them do not
+# error; delete them once nothing refers to them.
+adult_vacc_IE: 0.80      # SUPERSEDED by VE_inf in the waning curves
+adult_vacc_IE_hosp: 0.90 # SUPERSEDED by VE_sev in the waning curves
 adult_vacc_coverage: 0.0 # Set per country (e.g. IE.yaml); default 0 means no adult vaccination
 adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
-# Waning chain length in months = the MAXIMUM adult immunity duration modelled,
-# set to the longest arm of the 2026/2027 scenario grid (6/12/18 months).
+# Waning chain length, in months. Stage j holds people vaccinated j-1 months
+# ago, and reads month j-1 of the waning curve; at stage W they return to S.
+# W = 24 covers a two-year horizon, which is the most that can follow a campaign
+# within the current 730-day simulation window, so in practice nobody reaches
+# the end of the chain.
 # NB: W drives the compartment count (3 tiers x W adult V-stages), so it is the
-# single biggest driver of runtime — every +1 adds 3 x n_age ODE states. Encode
-# shorter durations via adult_vaccine_rel_protection, not by changing W.
-W: 12
+# single biggest driver of runtime - every +1 adds 3 x n_age ODE states.
+# get_waning_curve() requires the curve file to cover months 0..W-1.
+W: 24
 
 # ---- Infant vaccination schedule ----
 # Aligned to the RespiCompass 2026/2027 round (two seasons: 2026/27 and 2027/28).
@@ -407,21 +409,28 @@ adaptive_sampling:
   init_samples: 100  # Number of parameter sets per round
 
 # ---- Scenarios ----
-# N.B. A baseline scenario is run automatically
+# Every entry listed here is simulated by run_scenarios() (do_step 2), which
+# enumerates this list via parse_yaml(o, "*create*"). The baseline entry must
+# always be present: parse_scenarios() reads y$scenarios$baseline$name for it.
+#
+# CURRENTLY BASELINE ONLY. The vaccination scenarios are retained below,
+# commented out, so they can be switched back on by uncommenting. Each one adds
+# a full set of simulations per country, so keep them off while the calibration
+# is still being tuned.
 scenarios:
 - id: baseline
   name: "Baseline scenario"
-- id: no_vacc
-  name: "No vaccination scenario"
-  infant_vacc_coverage: 0.0
-  infant_vacc_IE: 0.0
-  infant_vaccination_catch_up_coverage: 0.0
-  adult_vacc_coverage: 0.0
-  adult_vacc_IE: 0.0
-- id: high_vacc
-  name: "High vaccination scenario"
-  infant_vacc_coverage: 0.95
-  infant_vaccination_catch_up_coverage: 0.80
-  adult_vacc_coverage: 0.80
+# - id: no_vacc
+#   name: "No vaccination scenario"
+#   infant_vacc_coverage: 0.0
+#   infant_vacc_IE: 0.0
+#   infant_vaccination_catch_up_coverage: 0.0
+#   adult_vacc_coverage: 0.0
+#   adult_vacc_IE: 0.0
+# - id: high_vacc
+#   name: "High vaccination scenario"
+#   infant_vacc_coverage: 0.95
+#   infant_vaccination_catch_up_coverage: 0.80
+#   adult_vacc_coverage: 0.80
 
 
