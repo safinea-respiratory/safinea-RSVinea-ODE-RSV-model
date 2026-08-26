@@ -81,7 +81,17 @@ run_scenarios = function(o) {
     fit_list$dates_model = fit1$dates_model
     
     message(" - Running model")
-    
+
+    # Adult vaccine waning replicate for this simulation, mapped 1:1 from the
+    # FITTING sample (sample 1 -> rep 1, sample 2 -> rep 2, ...) so the 500
+    # RespiCompass waning curves propagate into the projection intervals.
+    # Keyed on fitting_set rather than param_set because n_best_samples is the
+    # index that is routinely > 1 (n_parameter_sets is often left at 1, which
+    # would pin every simulation to rep 1 and erase the waning uncertainty).
+    # Deterministic by construction: re-running a sim_id reproduces its curve.
+    # get_waning_curve() wraps with modulo if there are more samples than reps.
+    o$waning_rep = this_sim$fitting_set
+
     # Simulate model with this parameter set
     result = model(o, this_sim$scenario,
                    fit     = fit_list,

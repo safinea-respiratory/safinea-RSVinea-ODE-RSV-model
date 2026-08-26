@@ -541,3 +541,74 @@ compute_background_mortality <- function(mortality_df, population_fine,
   return(rate_fine)
 }
 
+# -------------------------------------------------------- -
+# Adult vaccine waning curve for one simulation ----
+# -------------------------------------------------------- -
+# RespiCompass supplies VE against infection (VE_inf) and against severe disease
+# (VE_sev) by MONTHS SINCE VACCINATION, as 500 replicate curves. The replicates
+# carry the uncertainty in the waning model, and that uncertainty grows sharply
+# with time (at month 24 the 5-95% range of VE_inf spans roughly 0.41-0.59), so
+# which replicate a simulation uses matters for projections.
+#
+# Replicate selection is DETERMINISTIC, never random - a random draw would make
+# the model output non-reproducible for a given simulation, the same defect that
+# the per-call rnorm() jitter used to introduce in compute_p_hosp_A_row():
+#
+#   rep = NULL  -> the MEDIAN curve across all replicates. Used by calibration,
+#                  so the likelihood stays a deterministic function of the
+#                  fitted parameters. (Adult coverage is currently 0 in every
+#                  country yaml, so the curve has no effect on the likelihood at
+#                  all - but this keeps that true if coverage is ever turned on
+#                  during fitting.)
+#   rep = <int> -> replicate <rep>, mapped 1:1 from the simulation's FITTING
+#                  sample index (sample 1 -> rep 1, sample 2 -> rep 2, ...),
+#                  wrapping with modulo if there are more samples than
+#                  replicates. Set from this_sim$fitting_set in run_scenarios().
+#
+# Returns VE indexed by WANING STAGE 1..W. Stage j holds people vaccinated j-1
+# months ago (stage 1 = just vaccinated), so stage j reads the file's month j-1.
+get_waning_curve = function(o, W, rep = NULL) {
+
+  w = o$waning
+  if (is.null(w) || !nrow(w))
+    stop("get_waning_curve(): o$waning is empty - the RespiCompass waning ",
+         "curves failed to load. See o$waning_url in options.R.")
+  for (cc in c("rep", "month", "VE_inf", "VE_sev"))
+    if (!cc %in% names(w))
+      stop("get_waning_curve(): waning curve file is missing column '", cc, "'.")
+
+  if (is.null(rep)) {
+    cur = w[, .(VE_inf = median(VE_inf), VE_sev = median(VE_sev)), by = month]
+  } else {
+    n_rep  = max(w$rep, na.rm = TRUE)
+    rep_id = ((as.integer(rep) - 1L) %% n_rep) + 1L
+    cur    = w[w$rep == rep_id, .(month, VE_inf, VE_sev)]
+  }
+  cur = cur[order(cur$month), ]
+
+  # The chain has W stages, so we need months 0..W-1. Fail loudly rather than
+  # silently recycling a short curve across the sweep() in rsv_model().
+  need = seq_len(W) - 1L
+  idx  = match(need, cur$month)
+  if (anyNA(idx))
+    stop("get_waning_curve(): waning curves cover months ", min(cur$month), "-",
+         max(cur$month), " but W = ", W, " stages requires months 0-", W - 1,
+         ". Either lower W or supply a longer curve.")
+
+  VE_inf = cur$VE_inf[idx]
+  VE_sev = cur$VE_sev[idx]
+
+  # Conditional VE against severity, GIVEN infection:
+  #   VE_sev_cond = 1 - (1 - VE_sev) / (1 - VE_inf)
+  # Undefined if VE_inf reaches 1 (nobody is infected, so severity is moot) and
+  # negative if VE_sev < VE_inf, which would make vaccinated infecteds MORE
+  # likely to be hospitalised. Neither occurs in the supplied file (checked: 0
+  # of 18,500 rows have VE_sev < VE_inf), but guard anyway.
+  VE_sev_cond = ifelse(VE_inf >= 1, 0, 1 - (1 - VE_sev) / (1 - VE_inf))
+  VE_sev_cond = pmax(VE_sev_cond, 0)
+
+  return(list(VE_inf      = VE_inf,       # length W, by stage
+              VE_sev      = VE_sev,       # length W, by stage
+              VE_sev_cond = VE_sev_cond)) # length W, by stage
+}
+

@@ -142,7 +142,11 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # infecteds would be hospitalised at a HIGHER rate than unvaccinated, which
   # is nonsensical — so fail early with a clear message rather than silently
   # producing perverse dynamics.
-  for (.v in c("infant", "adult")) {
+  # NB adults are NOT checked here: their VE now comes from the RespiCompass
+  # waning curves rather than the yaml scalars, and get_waning_curve() does the
+  # equivalent check per waning stage. Checking p$adult_vacc_IE_hosp against
+  # p$adult_vacc_IE would test yaml values the model no longer reads.
+  for (.v in c("infant")) {
     ve_acq  <- p[[paste0(.v, "_vacc_IE")]]
     ve_hosp <- p[[paste0(.v, "_vacc_IE_hosp")]]
     if (ve_hosp < ve_acq)
@@ -160,15 +164,17 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
     stop("background_mortality_rate has ", n_mort, " values but there are ",
          p$n_age, " age groups; it must have exactly one rate per age group.")
 
-  # ---- Sanity check: adult waning curve length ----
-  # adult_vaccine_rel_protection is indexed by waning stage (1..W) and is applied
-  # with sweep() over the n_age x W V-stage matrices, so a length mismatch would
-  # silently recycle and corrupt protection by stage. Encode shorter immunity
-  # durations by decaying this curve to 0 earlier, NOT by changing W.
-  n_adult_curve <- length(unlist(p$adult_vaccine_rel_protection))
-  if (n_adult_curve != p$W)
-    stop("adult_vaccine_rel_protection has ", n_adult_curve, " values but W = ",
-         p$W, "; it must have exactly one value per waning stage (1..W).")
+  # ---- Adult vaccine waning curve (RespiCompass data) ----
+  # VE against infection and against severe disease by months since vaccination,
+  # taken directly from the RespiCompass waning curves rather than from the yaml.
+  # get_waning_curve() returns vectors of length W indexed by waning stage and
+  # validates that the file covers months 0..W-1, so a short curve fails loudly
+  # instead of silently recycling through the sweep() in rsv_model().
+  #
+  # o$waning_rep selects the replicate: set per simulation by run_scenarios()
+  # (parameter set 1 -> rep 1, 2 -> rep 2, ...), and left NULL during calibration
+  # so the median curve is used and the likelihood stays deterministic.
+  p$adult_ve <- get_waning_curve(o, W = p$W, rep = o$waning_rep)
 
   # ---- Model set up ---
   if (verbose != "none") message(" - Running model")
@@ -407,13 +413,25 @@ rsv_model = function(t, y, p){
     # 1 = no protection, 0 = full protection.
     infant_vaccine_immunity <- 1 - p$infant_vacc_IE * unlist(p$infant_vaccine_rel_protection)
 
-    # Adult: residual susceptibility indexed by waning stage j = 1..W.
-    adult_vacc_immunity <- 1 - p$adult_vacc_IE * unlist(p$adult_vaccine_rel_protection)
+    # Adult: residual susceptibility indexed by waning stage j = 1..W, taken
+    # straight from the RespiCompass waning curve (p$adult_ve$VE_inf[j] is the
+    # VE against infection j-1 months after vaccination). No scalar amplitude is
+    # applied - the file supplies ABSOLUTE VE, so adult_vacc_IE is not used here.
+    adult_vacc_immunity <- 1 - p$adult_ve$VE_inf
 
     # VE against severity — convert overall (trial-reported) to conditional on infection.
     # VE_sev_cond = 1 - (1 - VE_hosp_overall) / (1 - VE_acq)
     infant_vacc_IE_hosp_cond <- 1 - (1 - p$infant_vacc_IE_hosp) / (1 - p$infant_vacc_IE)
-    adult_vacc_IE_hosp_cond  <- 1 - (1 - p$adult_vacc_IE_hosp)  / (1 - p$adult_vacc_IE)
+
+    # Adult conditional VE against severity. The waning curve gives this per
+    # stage, but it CANNOT be applied per stage: the vaccinated infection
+    # streams (E1v/I1v etc.) are single pooled compartments, not stage-resolved,
+    # so the waning stage is lost at the moment of infection. Resolving it would
+    # need 6 x W x n_age extra states (~5,000 at W = 24).
+    # Averaging over stages loses very little here: conditional on not being
+    # infected, this vaccine adds only ~0.04 protection against severity at
+    # month 0, decaying to ~0.01 by month 24. See get_waning_curve().
+    adult_vacc_IE_hosp_cond  <- mean(p$adult_ve$VE_sev_cond)
 
     # ---- Adult V-stage infection flows ----
     # For each tier k and waning stage j, infection flow from V_k_j[a] to E_kv[a]:

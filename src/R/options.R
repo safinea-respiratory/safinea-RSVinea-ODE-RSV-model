@@ -87,6 +87,13 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   # compute_background_mortality() in auxiliary.R.
   o$mortality_url = cache_file(paste0(respicompass_raw, "auxiliary-data/mortality/mortality_agegroups.csv"))
 
+  # Adult vaccine waning curves: VE against infection (VE_inf) and against
+  # severe disease (VE_sev) by MONTHS SINCE VACCINATION, supplied as 500
+  # replicate curves ('rep') that carry the uncertainty in the waning model.
+  # Applies to the ADULT product only - infant VE still comes from the yaml
+  # (infant_vaccine_rel_protection / infant_vacc_IE).
+  o$waning_url = cache_file(paste0(respicompass_raw, "auxiliary-data/waning-immunity/waning_curves.csv"))
+
   o$vaccine_url = NULL
 
   # RespiCompass target (observed) data links (full country-name column)
@@ -119,6 +126,11 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$mortality = read.csv(o$mortality_url, fileEncoding = "UTF-8-BOM") %>%
     normalise_iso2(col = "iso2_code") %>%
     normalise_country_name()
+
+  # Adult vaccine waning curves, one row per (rep, month). Read once here and
+  # resolved to a single curve per simulation by get_waning_curve() in
+  # auxiliary.R - see there for how a replicate is chosen.
+  o$waning = read.csv(o$waning_url, fileEncoding = "UTF-8-BOM") %>% setDT()
 
   # Age-stratified RSV hospital burden (seasonal totals per age group), kept
   # separately here as the source for age_relativity()'s p_hosp-by-age ratios.
@@ -185,7 +197,7 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$n_best_samples = 10
   
   # Number of uncertainty parameter sets to sample 
-  o$n_parameter_sets = 10 # Best to set to 1 if not simulating parameter uncertainty
+  o$n_parameter_sets = 1 # Best to set to 1 if not simulating parameter uncertainty
 
   # Quantiles for credible intervals along the mean
   o$quantiles = c(0.05, 0.95)
