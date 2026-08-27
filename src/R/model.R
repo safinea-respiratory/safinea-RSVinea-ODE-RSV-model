@@ -528,11 +528,11 @@ rsv_model = function(t, y, p){
              (1 - p$p_death) * (1/p$delta) * H0 - p$p_death * (1/p$mu) * H0
     dR0  <-  (1 - p_hosp_A_t) * (1/p$theta) * I0 +
              (1 - p_hosp_A_t * (1 - infant_vacc_IE_hosp_cond)) * (1/p$theta) * I0v +
-             (1 - p$p_death) * (1/p$delta) * H0 - (1/p$omega_1) * R0
+             (1 - p$p_death) * (1/p$delta) * H0 - (1/p$omega) * R0
     dD0  <-  p$p_death * (1/p$mu) * H0
 
     # Tier 1 — adult vaccination stream (V1_j → E1v, S1 → E1)
-    dS1  <- -p$susceptibility * p$prior_infection_protection * lambda_A * S1 + (1/p$omega_1) * R0
+    dS1  <- -p$susceptibility * p$prior_infection_protection * lambda_A * S1 + (1/p$omega) * R0
     dE1  <-  p$susceptibility * p$prior_infection_protection * lambda_A * S1 - (1/p$gamma_A) * E1
     dE1v <-  E1v_inflow - (1/p$gamma_A) * E1v
     dI1  <-  (1/p$gamma_A) * E1  - (1/p$theta) * I1
@@ -542,11 +542,11 @@ rsv_model = function(t, y, p){
              (1 - p$p_death) * (1/p$delta) * H1 - p$p_death * (1/p$mu) * H1
     dR1  <-  (1 - p_hosp_A_t) * (1/p$theta) * I1 +
              (1 - p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)) * (1/p$theta) * I1v +
-             (1 - p$p_death) * (1/p$delta) * H1 - (1/p$omega_2) * R1
+             (1 - p$p_death) * (1/p$delta) * H1 - (1/p$omega) * R1
     dD1  <-  p$p_death * (1/p$mu) * H1
 
     # Tier 2
-    dS2  <- -p$susceptibility * p$prior_2infection_protection * lambda_A * S2 + (1/p$omega_2) * R1
+    dS2  <- -p$susceptibility * p$prior_2infection_protection * lambda_A * S2 + (1/p$omega) * R1
     dE2  <-  p$susceptibility * p$prior_2infection_protection * lambda_A * S2 - (1/p$gamma_A) * E2
     dE2v <-  E2v_inflow - (1/p$gamma_A) * E2v
     dI2  <-  (1/p$gamma_A) * E2  - (1/p$theta) * I2
@@ -556,11 +556,11 @@ rsv_model = function(t, y, p){
              (1 - p$p_death) * (1/p$delta) * H2 - p$p_death * (1/p$mu) * H2
     dR2  <-  (1 - p_hosp_A_t) * (1/p$theta) * I2 +
              (1 - p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)) * (1/p$theta) * I2v +
-             (1 - p$p_death) * (1/p$delta) * H2 - (1/p$omega_3) * R2
+             (1 - p$p_death) * (1/p$delta) * H2 - (1/p$omega) * R2
     dD2  <-  p$p_death * (1/p$mu) * H2
 
     # Tier 3+
-    dS3  <- -p$susceptibility * p$prior_3infection_protection * lambda_A * S3 + (1/p$omega_3) * R2 + (1/p$omega_4) * R3
+    dS3  <- -p$susceptibility * p$prior_3infection_protection * lambda_A * S3 + (1/p$omega) * R2 + (1/p$omega) * R3
     dE3  <-  p$susceptibility * p$prior_3infection_protection * lambda_A * S3 - (1/p$gamma_A) * E3
     dE3v <-  E3v_inflow - (1/p$gamma_A) * E3v
     dI3  <-  (1/p$gamma_A) * E3  - (1/p$theta) * I3
@@ -570,7 +570,7 @@ rsv_model = function(t, y, p){
              (1 - p$p_death) * (1/p$delta) * H3 - p$p_death * (1/p$mu) * H3
     dR3  <-  (1 - p_hosp_A_t) * (1/p$theta) * I3 +
              (1 - p_hosp_A_t * (1 - adult_vacc_IE_hosp_cond)) * (1/p$theta) * I3v +
-             (1 - p$p_death) * (1/p$delta) * H3 - (1/p$omega_4) * R3
+             (1 - p$p_death) * (1/p$delta) * H3 - (1/p$omega) * R3
     dD3  <-  p$p_death * (1/p$mu) * H3
 
     # Cumulative doses do not change in continuous time — they are incremented

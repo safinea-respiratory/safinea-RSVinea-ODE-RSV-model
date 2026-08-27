@@ -48,10 +48,7 @@ gamma_A:
 p_death: 0.0 # Proportion of hospitalisations resulting in death
 
 # ---- Rates of waning immunity ----
-omega_1: 230  # Days to become susceptible again following first infection
-omega_2: 260  # Days to become susceptible again following second infection
-omega_3: 290  # Days to become susceptible again following third infection
-omega_4: 400  # Days to become susceptible again following later infections
+omega: 200  # Mean days from recovery back to susceptible (R -> S).
 
 # ---- Social mixing ----
 # Countries to pull contact matrix data from
@@ -81,11 +78,11 @@ calibration_parameters:
   lower: 0.5
   upper: 2.0
 - param: "p_hosp_a_A"
-  lower: 0.04
-  upper: 0.07975
+  lower: 0.045
+  upper: 0.090
 - param: "p_hosp_b_A"
-  lower: 0.00208
-  upper: 0.004675
+  lower: 0.0015
+  upper: 0.0045
 - param: "p_hosp_c_A"
   lower: 0.0002538
   upper: 0.001018
@@ -93,23 +90,14 @@ calibration_parameters:
   lower: 0.065
   upper: 0.085
 - param: "p_hosp_A"
-  lower: 0.000032
-  upper: 0.000055
+  lower: 0.000040
+  upper: 0.000070
 - param: "init_inf"
   lower: 0.10
   upper: 0.40
-- param: "omega_1"
+- param: "omega"
   lower: 100
-  upper: 170
-- param: "omega_2"
-  lower: 110
-  upper: 180
-- param: "omega_3"
-  lower: 120
-  upper: 190
-- param: "omega_4"
-  lower: 130
-  upper: 200
+  upper: 300
 - param: "peak_day"
   lower: 100
   upper: 160

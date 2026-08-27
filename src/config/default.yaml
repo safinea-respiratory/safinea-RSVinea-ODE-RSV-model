@@ -305,8 +305,6 @@ infant_vacc_coverage: 0.0
 # file supplies absolute VE rather than an amplitude to scale. They are kept so
 # that existing country yamls and scenario overrides referencing them do not
 # error; delete them once nothing refers to them.
-adult_vacc_IE: 0.80      # SUPERSEDED by VE_inf in the waning curves
-adult_vacc_IE_hosp: 0.90 # SUPERSEDED by VE_sev in the waning curves
 adult_vacc_coverage: 0.0 # Set per country (e.g. IE.yaml); default 0 means no adult vaccination
 adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
 # Waning chain length, in months. Stage j holds people vaccinated j-1 months
@@ -331,7 +329,7 @@ infant_vaccination_catch_up_coverage: 0.00
 
 # ---- Adult vaccination schedule ----
 # Single annual campaign date(s); eligible adults are vaccinated on this date each year
-adult_vaccination_dates: ["2026-10-01", "2027-10-01"]
+adult_vaccination_dates: ["2026-10-01"]
 
 # 
 #season_effect: [1.03, 1.0, 0.95]
@@ -339,11 +337,28 @@ season2_effect: 1.0
 season3_effect: 1.0
 seasonality_exponent: 1
 
-# ---- Rates of waning immunity ----
-omega_1: 274  # Days to become susceptible again following first infection
-omega_2: 365  # Days to become susceptible again following second infection
-omega_3: 183  # Days to become susceptible again following third infection
-omega_4: 365  # Days to become susceptible again following later (fourth or more) infections
+# ---- Rate of waning immunity ----
+# Mean days from recovery back to susceptible (the R -> S flow, applied at rate
+# 1/omega for every tier). A SINGLE rate is used for all infection numbers, which
+# is what the RSV modelling literature does: a systematic review of RSV models
+# found none that vary the waning rate by infection order, and Hodgson et al.
+# (BMC Med, 2020) fit one "waning rate of sterilizing immunity post-infection".
+# Published durations centre on 183-230 days (range 160-350), hence the 100-300
+# prior used for fitting.
+#
+# This REPLACED omega_1..omega_4. Those four gave the sampler three extra
+# dimensions the data could not identify - in the AT fit, omega_1, omega_2 and
+# omega_4 all had a posterior as wide as their prior (posterior sd / prior sd
+# 0.94-1.07), i.e. the data said nothing about them.
+#
+# The increase in immunity with repeated infection is modelled through
+# SUSCEPTIBILITY instead - see prior_infection_protection above (0.75 / 0.60 /
+# 0.40), which is the standard mechanism and whose values sit inside the
+# reviewed range of 0.45-0.88.
+#
+# The value below is a placeholder of the right order; it is overridden whenever
+# omega is listed under calibration_parameters (as it is for every country).
+omega: 200
 
 # ---- Social mixing ----
 # Countries to pull contact matrix data from
@@ -359,18 +374,9 @@ calibration_parameters:
 - param: "init_inf"
   lower: 0.01
   upper: 0.02
-- param: "omega_1"
+- param: "omega"
   lower: 100
-  upper: 170
-- param: "omega_2"
-  lower: 110
-  upper: 180
-- param: "omega_3"
-  lower: 120
-  upper: 190
-- param: "omega_4"
-  lower: 130
-  upper: 200
+  upper: 300
 - param: "peak_day"
   lower: 100
   upper: 120
@@ -405,8 +411,8 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 10        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 100  # Number of parameter sets per round
+  rounds: 5        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 50  # Number of parameter sets per round
 
 # ---- Scenarios ----
 # Every entry listed here is simulated by run_scenarios() (do_step 2), which
@@ -420,17 +426,11 @@ adaptive_sampling:
 scenarios:
 - id: baseline
   name: "Baseline scenario"
-# - id: no_vacc
-#   name: "No vaccination scenario"
-#   infant_vacc_coverage: 0.0
-#   infant_vacc_IE: 0.0
-#   infant_vaccination_catch_up_coverage: 0.0
-#   adult_vacc_coverage: 0.0
-#   adult_vacc_IE: 0.0
-# - id: high_vacc
-#   name: "High vaccination scenario"
-#   infant_vacc_coverage: 0.95
-#   infant_vaccination_catch_up_coverage: 0.80
-#   adult_vacc_coverage: 0.80
+- id: low_vacc
+  name: "Low vaccination scenario"
+  adult_vacc_coverage: 0.20
+- id: high_vacc
+  name: "High vaccination scenario"
+  adult_vacc_coverage: 0.70
 
 
