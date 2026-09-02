@@ -179,12 +179,24 @@ p_confirm_hosp_A: 1   # Confirmation rate for hospitalisations caused by strain 
 p_confirm_death: 1    # Confirmation rate for deaths 
 
 # ---- Hospitalisation rate ----
-p_hosp_A: 0.0458 # Probability of severe disease requiring hospitalisation, given infection with strain A, in  oldest age group
-
-# Age-dependent probability of severe disease requiring hospitalisation, given infection with strain A 
-rel_hosp_a_A: 50 # First (youngest) age group relative to oldest age group
-rel_hosp_b_A: 20 # Second age group relative to oldest age group
-rel_hosp_c_A: 10 # Third age group relative to oldest age group
+# Age-specific hospitalisation probabilities (see compute_p_hosp_A_row in model.R).
+# These are ABSOLUTE probabilities of hospitalisation given infection, NOT
+# multipliers on p_hosp_A. Each one is the probability of its ANCHOR band; the
+# other bands in its group follow via data-derived shape factors:
+#   p_hosp_a_A -> 0-3m   (3-6m and 6-12m follow via the infant burden ratios)
+#   p_hosp_b_A -> 1-5y
+#   p_hosp_c_A -> 65+y
+#   p_hosp_A   -> 5-65y  (the bands with no parameter of their own)
+# Values below are placeholders of the right order of magnitude; every fitted
+# run overrides them from the calibration_parameters bounds in the country yaml.
+#
+# NB the previous defaults (p_hosp_A: 0.0458 with rel_hosp_a_A: 50) multiplied
+# to 2.29, i.e. not a probability, so an UNFITTED run could not start. These
+# replacements are internally consistent and sit inside the IE priors.
+p_hosp_A: 0.00015   # 5-65y
+p_hosp_a_A: 0.018   # 0-3m
+p_hosp_b_A: 0.004   # 1-5y
+p_hosp_c_A: 0.0015  # 65+y
 
 # ---- Mortality rate ----
 p_death: 0.0 # Proportion of hospitalisations resulting in death

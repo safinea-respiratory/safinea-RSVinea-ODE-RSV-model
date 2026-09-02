@@ -959,25 +959,56 @@ age_relativity = function(p){
   ratio1_s = ratio1_fallback * ratio1_s/ratio1_s
   ratio2_s = ratio2_fallback * ratio2_s/ratio2_s
 
-  # Helper: build a length-n_age p_hosp_A vector from a (ratio1, ratio2)
-  # pair. Draws fresh rnorm() values per call — see TODO below.
+  # Deterministic infant shape factor applied to the 3-6m and 6-12m bands on
+  # top of the burden ratios. This was previously `1 + rnorm(1, 0.25, 0.03)`,
+  # i.e. a mean uplift of 1.25 carrying a 3% random wobble redrawn on EVERY
+  # model() call. The random part is removed (see the note in the helper); the
+  # 1.25 central value is retained so the central behaviour is unchanged.
+  infant_shape = 1.25
+
+  # Helper: build a length-n_age p_hosp_A vector from a (ratio1, ratio2) pair.
+  # Deterministic: the same parameter set always produces the same vector.
   compute_p_hosp_A_row = function(ratio1, ratio2) {
     p$age_group_map %>%
-      mutate(p_hosp_A = p$p_hosp_A) %>% # Baseline = oldest age-group hosp risk
+      # Baseline p_hosp_A applies ONLY to the bands with no parameter of their
+      # own - here 5-65y (the TRUE branch below). It is NOT a global multiplier.
+      mutate(p_hosp_A = p$p_hosp_A) %>%
       select(-smaller_group) %>%
       group_by(larger_group) %>%
       slice(1) %>%   # Keep just 'larger groups'
       ungroup() %>%
-      # TODO: the rnorm() draws below inject fresh randomness into p_hosp_A
-      # on every call, so calibration is not reproducible for the same fit.
-      # Either make this deterministic (use mean = 0.25) or route through
-      # the yaml `uncertainty:` block so the draw is logged and seeded.
+      # Each age group's hospitalisation probability is set DIRECTLY by its own
+      # parameter, in ABSOLUTE terms - there is no shared multiplier. Formerly
+      # these were relative amplitudes (rel_hosp_*_A) multiplying p_hosp_A, so
+      # p_hosp_A moved all six bands at once: a band could only be adjusted
+      # independently across the span of its own multiplier, and anything larger
+      # required moving p_hosp_A and compensating in every other band. Each
+      # parameter below is the absolute P(hosp | infection) of its ANCHOR band:
+      #   p_hosp_a_A -> 0-3m   (3-6m and 6-12m follow via the burden ratios)
+      #   p_hosp_b_A -> 1-5y
+      #   p_hosp_c_A -> 65+y
+      #   p_hosp_A   -> 5-65y  (the TRUE branch)
+      #
+      # The data-derived shape factors (ratio1, ratio2) are applied
+      # DETERMINISTICALLY. They previously carried a 1 + N(0.25, 0.03)
+      # multiplicative jitter redrawn on every model() call, which made the
+      # LIKELIHOOD STOCHASTIC: the same parameter set scored differently each
+      # time, so the SMC resampling step partly selected on lucky draws rather
+      # than on fit, and no before/after comparison of a prior change was
+      # possible. It was also the only thing making the rows of
+      # p_hosp_A_by_season differ, since the per-season ratios are collapsed to
+      # the pooled value above - so it manufactured random season-to-season
+      # jumps in severity rather than modelling real variation.
+      #
+      # Do NOT reintroduce per-call randomness here. If the sampling error in
+      # the shape factors needs representing, give it a parameter drawn once per
+      # parameter set, so it can be fitted, inspected, and held fixed on a re-run.
       mutate(p_hosp_A = case_when(
-        larger_group %in% c("0-3m")  ~ p_hosp_A * p$rel_hosp_a_A,
-        larger_group %in% c("3-6m")  ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0.25, 0.03)) / ratio1,
-        larger_group %in% c("6-12m") ~ p_hosp_A * p$rel_hosp_a_A * (1 + rnorm(1, 0.25, 0.03)) / ratio2,
-        larger_group %in% c("1-5y")  ~ p_hosp_A * p$rel_hosp_b_A,
-        larger_group %in% c("65+y")  ~ p_hosp_A * p$rel_hosp_c_A,
+        larger_group %in% c("0-3m")  ~ p$p_hosp_a_A,
+        larger_group %in% c("3-6m")  ~ p$p_hosp_a_A * infant_shape / ratio1,
+        larger_group %in% c("6-12m") ~ p$p_hosp_a_A * infant_shape / ratio2,
+        larger_group %in% c("1-5y")  ~ p$p_hosp_b_A,
+        larger_group %in% c("65+y")  ~ p$p_hosp_c_A,
         TRUE ~ p_hosp_A)) %>%
       # Map hospitalisation risk back to fine age groups
       right_join(p$age_group_map, by = "larger_group") %>%
@@ -1010,8 +1041,9 @@ age_relativity = function(p){
   # Hard check: every p_hosp_A entry must be a valid probability in [0, 1].
   # With the fallback ladder above the ratios going into compute_p_hosp_A_row
   # are always finite and non-zero, so the matrix can't contain Inf/NaN.
-  # The remaining failure modes are configuration-driven: e.g. the yaml
-  # combination p_hosp_A * rel_hosp_*_A exceeds 1, or rnorm() flips sign.
+  # The remaining failure modes are configuration-driven: e.g. a yaml value
+  # of p_hosp_{a,b,c}_A or p_hosp_A exceeds 1, or a degenerate burden ratio
+  # flips the sign.
   # Stop with a pointer to the offending (season, age_group) cell so the
   # user can fix the yaml rather than silently feed a non-probability into
   # the ODE.
@@ -1025,14 +1057,15 @@ age_relativity = function(p){
          " (season, age_group) cell(s). First offender: season ",
          bad_seasons[1], ", age_group ", bad_ages[1],
          ", p_hosp_A = ", signif(bad_vals[1], 4),
-         ". Check yaml: p_hosp_A * rel_hosp_*_A must produce probabilities ",
-         "in [0, 1] (e.g. for 0-3m, p_hosp_A * rel_hosp_a_A <= 1).")
+         ". Check yaml: p_hosp_{a,b,c}_A and p_hosp_A are absolute ",
+         "probabilities and must each lie in [0, 1] (e.g. p_hosp_a_A is the ",
+         "0-3m probability directly, not a multiplier).")
   }
   if (any(p$p_hosp_A_fallback < 0 | p$p_hosp_A_fallback > 1)) {
     bad = which(p$p_hosp_A_fallback < 0 | p$p_hosp_A_fallback > 1)
     stop("age_relativity(): pooled-fallback p_hosp_A outside [0, 1] for ",
          "age_group(s): ", paste(p$age_groups[bad], collapse = ", "),
-         ". Check baseline p_hosp_A and rel_hosp_*_A in the yaml.")
+         ". Check p_hosp_A and p_hosp_{a,b,c}_A in the yaml.")
   }
   
   # Keep p$p_hosp_A as a scalar-vector default (the pooled fallback) for

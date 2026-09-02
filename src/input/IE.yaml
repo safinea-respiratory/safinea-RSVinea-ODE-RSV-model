@@ -59,19 +59,24 @@ calibration_parameters:
 - param: "vaccination_catch_up_coverage"
   lower: 0.3
   upper: 0.7
-- param: "rel_hosp_a_A"
-  lower: 90
-  upper: 120
-- param: "rel_hosp_b_A"
-  lower: 20
-  upper: 30
-- param: "rel_hosp_c_A"
-  lower: 5
-  upper: 12
+# Absolute P(hosp | infection) for each anchor band - NOT multipliers.
+# Converted from the previous rel_hosp_*_A multipliers as
+# [p_hosp_A_lower * rel_lower, p_hosp_A_upper * rel_upper], which is exactly
+# the set of probabilities each band could reach before, so reachability is
+# preserved while the bands are decoupled.
+- param: "p_hosp_a_A"     # 0-3m   (was rel_hosp_a_A [90, 120])
+  lower: 0.01080
+  upper: 0.02280
+- param: "p_hosp_b_A"     # 1-5y   (was rel_hosp_b_A [20, 30])
+  lower: 0.00240
+  upper: 0.00570
+- param: "p_hosp_c_A"     # 65+y   (was rel_hosp_c_A [5, 12])
+  lower: 0.00060
+  upper: 0.00228
 - param: "beta_A"
   lower: 0.060
   upper: 0.099
-- param: "p_hosp_A"
+- param: "p_hosp_A"     # 5-65y only, now that the bands are decoupled
   lower: 0.000120
   upper: 0.000190
 - param: "init_inf"

@@ -32,13 +32,12 @@ run_model_test = function(o, scenario = "baseline", rerun = TRUE, benchmark = FA
 
   # ---- Choose the parameter set to test at ----
   # Run at the CENTRE OF THE CALIBRATION PRIORS rather than at the bare yaml
-  # scalars. The scalar defaults are not a runnable parameterisation on their
-  # own: p_hosp_A (0.0458) and rel_hosp_a_A (50) are inherited from an older
-  # parameterisation and multiply to 2.29, so age_relativity() correctly rejects
-  # them as a probability. Every country fits these parameters, so the scalars
-  # are never used in a real run. Testing at the prior midpoint therefore
-  # exercises a parameter set the model is actually meant to run at, and keeps
-  # this test honest without silently retuning model defaults.
+  # scalars. Every country fits these parameters, so the scalar defaults are
+  # never used in a real run; testing at the prior midpoint therefore exercises
+  # a parameter set the model is actually meant to run at.
+  # (Historically the scalars were also unusable: p_hosp_A 0.0458 x rel_hosp_a_A
+  # 50 = 2.29, not a probability. The absolute p_hosp_{a,b,c}_A defaults fixed
+  # that, but the prior midpoint remains the more meaningful test point.)
   prior_mid = rowMeans(fit$bounds)
   names(prior_mid) = fit$params
 

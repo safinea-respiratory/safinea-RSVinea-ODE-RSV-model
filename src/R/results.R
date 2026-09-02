@@ -156,9 +156,13 @@ adjust_age_specific_param = function(param_data){
   param_data$qi_c <- param_data$beta_A * param_data$rel_sus_c
   param_data$qi_d <- param_data$beta_A 
   
-  param_data$p_hosp_a <- param_data$p_hosp_A * param_data$rel_hosp_a_A
-  param_data$p_hosp_b <- param_data$p_hosp_A * param_data$rel_hosp_b_A
-  param_data$p_hosp_c <- param_data$p_hosp_A * param_data$rel_hosp_c_A
+  # Hospitalisation probabilities are now ABSOLUTE per band (see
+  # compute_p_hosp_A_row in model.R), so these are direct reads rather than
+  # p_hosp_A * rel_hosp_*_A. Without this edit these rows would be NA, since
+  # the rel_hosp_*_A columns no longer exist.
+  param_data$p_hosp_a <- param_data$p_hosp_a_A
+  param_data$p_hosp_b <- param_data$p_hosp_b_A
+  param_data$p_hosp_c <- param_data$p_hosp_c_A
   param_data$p_hosp_d <- param_data$p_hosp_A 
   
   param_data$p_death_a <- param_data$p_death * param_data$rel_death_a
