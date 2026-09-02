@@ -76,6 +76,27 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   o$burden = read.csv(o$respicompass$hospital_burden_agegroups, fileEncoding = "UTF-8-BOM")
   
   
+  # ---- Numerics ----
+  # ODE solver method passed to deSolve::ode(). This model has ~775 states
+  # (31 age groups x 25 compartments). For a STIFF solver the Jacobian dominates
+  # runtime: a dense n x n Jacobian costs ~n extra derivative calls to assemble
+  # plus an O(n^3) factorisation, repeated every few steps. That cost is
+  # per-STEP, so it does NOT shrink when you reduce n_days.
+  #
+  # This SEIRS system is only mildly stiff (fastest rates ~1/4-1/9 per day), so a
+  # non-stiff or auto-switching solver can win by avoiding the Jacobian entirely:
+  #   "adams"  - explicit non-stiff; fastest IF the system is truly non-stiff.
+  #   "lsoda"  - deSolve's default; auto-switches non-stiff <-> stiff.
+  #   "vode"   - pure stiff BDF with a dense Jacobian. Was the hardcoded method
+  #              here previously. Workable at this size, but under a 12-way
+  #              parallel calibration its dense linear algebra is memory
+  #              bandwidth-bound and each simulation cost ~5x its standalone
+  #              runtime through contention.
+  # Benchmark before trusting a change: "adams" is only valid if the system is
+  # genuinely non-stiff, so verify the trajectories against "vode" as well as
+  # the timings.
+  o$ode_method = "adams"
+
   # ---- Calibration settings ----
   
   # NB: the observation-model over-dispersion used by the likelihood is `k` in

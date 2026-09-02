@@ -146,13 +146,15 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
             " will use scalar = 1. Either shorten n_days or extend ",
             "season_effect in the yaml.")
   
-  # Solve ODE model
+  # Solve ODE model.
+  # Solver method is set in options.R (o$ode_method) - see the note there on
+  # why a non-stiff solver can beat a dense-Jacobian stiff one for this system.
   out = deSolve::ode(y = states,
                      times = seq(1, p$n_days, by = 1),
                      func = rsv_model,
                      p = p,
                      events = list(func = ageing_event, time = event_times),
-                     method = "vode",
+                     method = o$ode_method,
                      atol = 1e-4,    # absolute tolerance
                      rtol = 1e-4)    # relative tolerance
   
