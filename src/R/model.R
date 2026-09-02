@@ -314,31 +314,31 @@ rsv_model = function(t, y, p){
     # Note: p_hosp_A_t already includes age effect and current-window scaling,
     # see age_relativity() and the per-step lookup above.
     dH0 = (p_hosp_A_t * 1/p$theta * I0) - ((1-p$p_death) * 1/p$delta * H0) - (p$p_death * 1/p$mu * H0)
-    dR0 = (1-p_hosp_A_t) * 1/p$theta * I0 + ((1-p$p_death) * 1/p$delta * H0) - (1/p$omega_1 * R0)
+    dR0 = (1-p_hosp_A_t) * 1/p$theta * I0 + ((1-p$p_death) * 1/p$delta * H0) - (1/p$omega * R0)
     dD0 = (p$p_death * 1/p$mu * H0)
 
     # Population with 1x previous exposure
-    dS1 = - p$susceptibility * p$prior_infection_protection * lambda_A * S1 + (1/p$omega_1 * R0)
+    dS1 = - p$susceptibility * p$prior_infection_protection * lambda_A * S1 + (1/p$omega * R0)
     dE1 = (p$susceptibility * p$prior_infection_protection * lambda_A * S1) - (1/p$gamma_A * E1)
     dI1 = (1/p$gamma_A * E1) - (1/p$theta * I1)
     dH1 = (p_hosp_A_t * 1/p$theta * I1) - ((1-p$p_death) * 1/p$delta * H1) - (p$p_death * 1/p$mu * H1)
-    dR1 = (1-p_hosp_A_t) * 1/p$theta * I1 + ((1-p$p_death) * 1/p$delta * H1) - (1/p$omega_2 * R1)
+    dR1 = (1-p_hosp_A_t) * 1/p$theta * I1 + ((1-p$p_death) * 1/p$delta * H1) - (1/p$omega * R1)
     dD1 = (p$p_death * 1/p$mu * H1)
 
     # Exposure 2x
-    dS2 = - p$susceptibility * p$prior_2infection_protection * lambda_A * S2 + (1/p$omega_2 * R1)
+    dS2 = - p$susceptibility * p$prior_2infection_protection * lambda_A * S2 + (1/p$omega * R1)
     dE2 = (p$susceptibility * p$prior_2infection_protection * lambda_A * S2) - (1/p$gamma_A * E2)
     dI2 = (1/p$gamma_A * E2) - (1/p$theta * I2)
     dH2 = (p_hosp_A_t * 1/p$theta * I2) - ((1-p$p_death) * 1/p$delta * H2) - (p$p_death * 1/p$mu * H2)
-    dR2 = (1-p_hosp_A_t) * 1/p$theta * I2 + ((1-p$p_death) * 1/p$delta * H2) - (1/p$omega_3 * R2)
+    dR2 = (1-p_hosp_A_t) * 1/p$theta * I2 + ((1-p$p_death) * 1/p$delta * H2) - (1/p$omega * R2)
     dD2 = (p$p_death * 1/p$mu * H2)
 
     # Exposure 3x or more
-    dS3 = - p$susceptibility * p$prior_3infection_protection * lambda_A * S3 + (1/p$omega_3 * R2) + (1/p$omega_4 * R3)
+    dS3 = - p$susceptibility * p$prior_3infection_protection * lambda_A * S3 + (1/p$omega * R2) + (1/p$omega * R3)
     dE3 = (p$susceptibility * p$prior_3infection_protection * lambda_A * S3) - (1/p$gamma_A * E3)
     dI3 = (1/p$gamma_A * E3) - (1/p$theta * I3)
     dH3 = (p_hosp_A_t * 1/p$theta * I3) - ((1-p$p_death) * 1/p$delta * H3) - (p$p_death * 1/p$mu * H3)
-    dR3 = (1-p_hosp_A_t) * 1/p$theta * I3 + ((1-p$p_death) * 1/p$delta * H3) - (1/p$omega_4 * R3)
+    dR3 = (1-p_hosp_A_t) * 1/p$theta * I3 + ((1-p$p_death) * 1/p$delta * H3) - (1/p$omega * R3)
     dD3 = (p$p_death * 1/p$mu * H3)
     
     

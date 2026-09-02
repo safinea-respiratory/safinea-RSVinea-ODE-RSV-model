@@ -145,7 +145,7 @@ Parameters that should vary stochastically across simulations are specified with
 | `peak_day` | Day-of-year of peak transmission | Yes |
 | `seasonality_exponent` | Shape of the cosine seasonality curve | Yes |
 | `season2_effect`, `season3_effect` | Year-to-year scalars on beta | Yes |
-| `omega_1`–`omega_4` | Waning immunity durations (days) | Yes |
+| `omega` | Waning immunity duration (days), shared across infection-history tiers | Yes |
 | `p_hosp_A` | Baseline hospitalisation probability (oldest age group) | Yes |
 | `init_inf` | Global seeding intensity scalar | Yes |
 | `vacc_coverage` | Routine vaccination coverage | Scenario-dependent |

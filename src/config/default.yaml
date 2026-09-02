@@ -209,10 +209,8 @@ season3_effect: 0.9
 seasonality_exponent: 1
 
 # ---- Rates of waning immunity ----
-omega_1: 274  # Days to become susceptible again following first infection
-omega_2: 365  # Days to become susceptible again following second infection
-omega_3: 183  # Days to become susceptible again following third infection
-omega_4: 365  # Days to become susceptible again following later (fourth or more) infections
+omega: 200  # Days to become susceptible again following infection (all infection-history tiers)
+            # Placeholder: overridden wherever omega is fitted (i.e. every country).
 
 # ---- Social mixing ----
 # Countries to pull contact matrix data from
@@ -228,18 +226,9 @@ calibration_parameters:
 - param: "init_inf"
   lower: 0.01
   upper: 0.02
-- param: "omega_1"
+- param: "omega"
   lower: 100
-  upper: 170
-- param: "omega_2"
-  lower: 110
-  upper: 180
-- param: "omega_3"
-  lower: 120
-  upper: 190
-- param: "omega_4"
-  lower: 130
-  upper: 200
+  upper: 300
 - param: "peak_day"
   lower: 100
   upper: 120
