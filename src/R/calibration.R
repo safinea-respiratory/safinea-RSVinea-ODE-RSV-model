@@ -380,15 +380,29 @@ likelihood = function(o, fit, r_idx, do_plot = FALSE) {
     format_weights(fit$input) %>%
     setDT()
   
-  # Combine target data and model output data tables
-  overdisp = o$k
-  
+  # ---- Observation-model over-dispersion ----
+  # `k` is the negative-binomial SIZE: Var = mu + mu^2/k, so LARGER k means LESS
+  # over-dispersion (k -> Inf is Poisson). It behaves like every other model
+  # parameter: if `k` is listed under calibration_parameters it is FITTED, and
+  # param_df carries one value per sample; otherwise the fixed value from the
+  # yaml is used for every sample.
+  if ("k" %in% names(param_df)) {
+    disp_df = param_df %>% select(param_id, .k = k)
+  } else {
+    k_fixed = fit$input$k
+    if (is.null(k_fixed))
+      stop("Observation-model dispersion 'k' not found in the parsed yaml. Add ",
+           "`k:` to config/default.yaml, or list it under calibration_parameters.")
+    disp_df = param_df %>% select(param_id) %>% mutate(.k = k_fixed)
+  }
+
   likelihood_df = model_df %>%
     inner_join(data_df, by = c("age_group", "metric", "date", "data_freq"), relationship = "many-to-many") %>%
+    left_join(disp_df, by = "param_id") %>%
     # Normalise both target and value to ensure comparable scales
     mutate(value = pmax(value, 0)) %>%
     mutate(
-      this_likelihood = weight + dnbinom(round(target), size = overdisp, mu = value, log = TRUE)
+      this_likelihood = weight + dnbinom(round(target), size = .k, mu = value, log = TRUE)
     ) %>%
     # Note: log-likelihood is averaged (mean) within each metric/data_freq,
     # then summed across metrics. The mean step weights each metric equally

@@ -80,6 +80,9 @@ calibration_parameters:
 - param: "omega"
   lower: 100
   upper: 300
+- param: "k"
+  lower: 1
+  upper: 100
 - param: "peak_day"
   lower: 110
   upper: 130

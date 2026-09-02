@@ -65,9 +65,19 @@ age_group_map:
 # This must be at least the sum of the burn-in period and the fitting dates
 n_days: 210
 
-# Overdispersion (see . Endo et al. 2020 Estimating the overdispersion in covid-19
-# transmission using outbreak sizes outside China)
-k: 0.1
+# ---- Observation-model over-dispersion ----
+# Dispersion of the negative-binomial likelihood used to compare model output
+# with the surveillance data. This is the NB SIZE parameter:
+#     Var = mu + mu^2 / k     (larger k = LESS over-dispersed; k -> Inf = Poisson)
+# so the implied coefficient of variation of the observations is about 1/sqrt(k):
+#     k = 5 -> ~45%,  k = 20 -> ~22%,  k = 100 -> ~10%
+#
+# Like any other parameter, list `k` under calibration_parameters to FIT it;
+# otherwise this fixed value is used.
+#
+# For reference in the RSV literature: Krauer et al. fit this parameter and
+# obtained the equivalent of k ~ 5.9; a related RKI RSV model fixed it at k = 50.
+k: 10
 
 # Metrics to store in (scenario) output
 # note: remove 'metrics_to_save' to obtain all model output
@@ -229,6 +239,9 @@ calibration_parameters:
 - param: "omega"
   lower: 100
   upper: 300
+- param: "k"
+  lower: 1
+  upper: 100
 - param: "peak_day"
   lower: 100
   upper: 120

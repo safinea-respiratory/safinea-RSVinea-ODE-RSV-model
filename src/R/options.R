@@ -78,10 +78,11 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   
   # ---- Calibration settings ----
   
-  # Over-dispersion parameter for calculation of likelihood
-  # (See Endo et al. 2020 Estimating the overdispersion in COVID-19
-  # transmission using outbreak sizes outside China)
-  o$k = 0.1
+  # NB: the observation-model over-dispersion used by the likelihood is `k` in
+  # config/default.yaml, NOT an option here. It behaves like any other model
+  # parameter: list it under calibration_parameters to FIT it, otherwise the
+  # fixed yaml value is used. It was previously duplicated as o$k, which
+  # silently shadowed the yaml value - see the note on `k` in default.yaml.
 
   # Re-run fitting, overwrite if TRUE, otherwise will use previous fit
   o$overwrite_samples = TRUE
