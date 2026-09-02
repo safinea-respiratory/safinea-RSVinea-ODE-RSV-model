@@ -411,8 +411,8 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 5        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 50  # Number of parameter sets per round
+  rounds: 10        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 100  # Number of parameter sets per round
 
 # ---- Scenarios ----
 # Every entry listed here is simulated by run_scenarios() (do_step 2), which
@@ -432,5 +432,8 @@ scenarios:
 - id: high_vacc
   name: "High vaccination scenario"
   adult_vacc_coverage: 0.70
+- id: super_high_vacc
+  name: "Super high vaccination scenario"
+  adult_vacc_coverage: 0.98
 
 
