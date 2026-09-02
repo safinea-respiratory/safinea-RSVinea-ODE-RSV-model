@@ -386,7 +386,10 @@ respiCompass_df_submission %>%
 # This section is skipped automatically if the file is not present.
 ########################################################## #
 
-static_model_path <- "output/3_results/IRL_respiCompass_2025_2026_results_staticModel.parquet"
+# NB: output/ is namespaced by git branch (see set_dirs in R/directories.R), so
+# this must be resolved via o$pth$results rather than hardcoded as "output/...".
+static_model_path <- file.path(o$pth$results,
+                               "IRL_respiCompass_2025_2026_results_staticModel.parquet")
 
 if (!file.exists(static_model_path)) {
   message("Skipping static vs dynamic model comparison.")

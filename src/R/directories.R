@@ -57,8 +57,35 @@ set_dirs = function(o) {
   
   # ---- Output directories ----
   
-  # Parent path of all output files
-  pth_output = file.path(pth$code, "output")
+  # Parent path of all output files, NAMESPACED BY GIT BRANCH.
+  #
+  # src/output/ is gitignored, and git deliberately leaves ignored files alone
+  # when switching branches. Without this namespacing every branch writes the
+  # SAME paths for the same analysis_name (output/1_calibration/<name>/...) and
+  # silently overwrites the other branch's results. That is especially easy to
+  # miss because nothing here ever deletes: make_out_dirs() only creates.
+  #
+  # Set o$output_tag in options.R to override (e.g. to share results between
+  # branches deliberately, or when running outside a git checkout).
+  tag = o$output_tag
+  if (is.null(tag)) {
+    tag = tryCatch(
+      system2("git", c("-C", shQuote(pth$code), "rev-parse", "--abbrev-ref", "HEAD"),
+              stdout = TRUE, stderr = FALSE),
+      error   = function(e) NULL,
+      warning = function(w) NULL)
+  }
+
+  # Fall back to a fixed name if git is unavailable or HEAD is detached
+  if (length(tag) != 1 || is.na(tag) || !nzchar(tag)) tag = "default"
+
+  # Branch names may contain characters that are illegal in paths (e.g. "/")
+  tag = gsub("[^A-Za-z0-9._-]", "-", tag)
+
+  pth_output = file.path(pth$code, "output", tag)
+
+  # Expose it so other scripts (e.g. results_evaluation.R) can resolve paths
+  pth$output = pth_output
   
   # Path to test run files
   out$testing = file.path(pth_output, "0_testing")
