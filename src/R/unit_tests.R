@@ -20,6 +20,32 @@ run_model_test = function(o, scenario = "baseline", rerun = TRUE, benchmark = FA
   
   message("* Testing single model simulation")
 
+  # ---- Load the epidemiological data ----
+  # model() is not self-contained: age_relativity() derives the age-relativity
+  # ratios from the 4-weekly hospital burden that arrives as fit$data (see
+  # `p$burden` in model.R). Passing fit = NULL therefore fails with
+  # "no applicable method for 'filter' applied to an object of class NULL"
+  # before the ODE is ever reached. Load the data the same way run_calibration()
+  # does.
+  fit = setup_calibration(o)   # See calibration.R
+  fit = load_data(o, fit)      # See load_data.R
+
+  # ---- Choose the parameter set to test at ----
+  # Run at the CENTRE OF THE CALIBRATION PRIORS rather than at the bare yaml
+  # scalars. The scalar defaults are not a runnable parameterisation on their
+  # own: p_hosp_A (0.0458) and rel_hosp_a_A (50) are inherited from an older
+  # parameterisation and multiply to 2.29, so age_relativity() correctly rejects
+  # them as a probability. Every country fits these parameters, so the scalars
+  # are never used in a real run. Testing at the prior midpoint therefore
+  # exercises a parameter set the model is actually meant to run at, and keeps
+  # this test honest without silently retuning model defaults.
+  prior_mid = rowMeans(fit$bounds)
+  names(prior_mid) = fit$params
+
+  test_fit = c(as.list(prior_mid),
+               list(data        = fit$data,
+                    dates_model = fit$dates_model))
+
   # ---- Simulate model ----
  
   # File to save after a simulation
@@ -36,7 +62,7 @@ run_model_test = function(o, scenario = "baseline", rerun = TRUE, benchmark = FA
     # Run model for the defined scenario (see model.R)
     result = model(o, 
                    scenario = scenario,
-                   fit     = NULL,
+                   fit     = test_fit,
                    uncert  = uncert_list,
                    do_plot = TRUE,
                    verbose = "date")
