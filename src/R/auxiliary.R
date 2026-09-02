@@ -390,3 +390,19 @@ redistribute_population <- function(coarse_df, fine_age_groups, fine_age_breaks,
   return( bind_rows(redistributed) )
 }
 
+
+# -------------------------------------------------------- -
+# Reflect values back inside [lo, hi] rather than clamping ----
+# -------------------------------------------------------- -
+# Clamping parks every overshoot exactly on the bound, creating an artificial
+# spike there that is easily misread as "the prior is too narrow". Reflecting
+# folds the excess back into the interval instead, which preserves the density
+# near the edge. Repeated folding (via the modulo) handles overshoots larger
+# than the interval width.
+reflect_into = function(v, lo, hi) {
+  if (!is.finite(lo) || !is.finite(hi) || hi <= lo) return(pmin(pmax(v, lo), hi))
+  span = hi - lo
+  x    = (v - lo) %% (2 * span)     # R's %% returns a non-negative result
+  x    = ifelse(x > span, 2 * span - x, x)
+  return(lo + x)
+}

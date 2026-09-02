@@ -84,6 +84,24 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   # fixed yaml value is used. It was previously duplicated as o$k, which
   # silently shadowed the yaml value - see the note on `k` in default.yaml.
 
+  # ---- Adaptive perturbation kernel (see sample_parameters in calibration.R) ----
+  # Between rounds, resampled parameter sets are jittered to create new candidates.
+  # The step size for each parameter is derived from the SPREAD of the resampled
+  # particles for that parameter, rather than being a fixed percentage: the spread
+  # is the current estimate of how uncertain that parameter is, so it is the right
+  # scale to explore at. It also anneals automatically - wide while the particles
+  # are scattered, narrow once they concentrate.
+  #
+  # kernel_scale : multiplier on the measured (log-scale) particle spread.
+  #   Values < 1 refine, > 1 explore more aggressively. ABC-SMC (Beaumont 2009)
+  #   uses a kernel variance of 2x the particle variance, but that sits inside an
+  #   importance-sampling scheme whose weights CORRECT for the proposal; this
+  #   resample-and-perturb scheme has no such correction, so we start smaller.
+  # kernel_floor : minimum log-scale sd, so the kernel can never collapse to zero
+  #   and freeze the search if the particles concentrate prematurely.
+  o$kernel_scale = 0.5
+  o$kernel_floor = 0.01
+
   # Re-run fitting, overwrite if TRUE, otherwise will use previous fit
   o$overwrite_samples = TRUE
 
