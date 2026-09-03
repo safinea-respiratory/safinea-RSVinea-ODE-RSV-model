@@ -288,8 +288,10 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 5        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 300  # Number of parameter sets per round
+  # NB: the loop runs r_val in 0:rounds, so `rounds: 10` means ELEVEN rounds -
+  # r0 (initial Latin hypercube) plus r1-r10 of resample-and-perturb.
+  rounds: 10        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 100  # Number of parameter sets per round
 
 vacc_coverage: 0.83 # vaccination coverage
 vacc_IE: # Immunisation effectiveness, given by respicompass
