@@ -89,7 +89,12 @@ amplitude: 0.0
 peak_day: 68.37 
 
 # Transmission probability at maximum infectivity, susceptibility and seasonality
-beta_A: 0.1446 # transmission rate for strain A
+# Per-season transmission rate for strain A (see the ODE in model.R).
+# These are ABSOLUTE rates, one per season, NOT a baseline plus scalars.
+# Seasons beyond the third carry forward beta_A_s3.
+beta_A_s1: 0.1446 # season 1 transmission rate
+beta_A_s2: 0.1301 # season 2 (was beta_A * season2_effect = 0.1446 * 0.9)
+beta_A_s3: 0.1301 # season 3 (was beta_A * season3_effect = 0.1446 * 0.9)
 
 # Age-dependent susceptibility to infection: 
 # Currently only including protection from maternal immunity ()
@@ -225,9 +230,6 @@ vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m" ]
 vaccination_catch_up_coverage: 0.40
 
 # 
-#season_effect: [1.03, 1.0, 0.95]
-season2_effect: 0.9
-season3_effect: 0.9
 seasonality_exponent: 1
 
 # ---- Rates of waning immunity ----

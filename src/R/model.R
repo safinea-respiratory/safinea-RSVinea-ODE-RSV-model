@@ -129,22 +129,21 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   event_dates <- seq(from, to, by = "1 month")
   event_times <- as.numeric(event_dates - p$start_date)
 
-  # ---- Sanity check: season_effect coverage ----
-  # The ODE applies a per-season scalar on beta, indexed by the season number
-  # returned by get_season_number(). The vector season_effect has length 3
-  # (season1 = 1, season2_effect, season3_effect). If the simulation spans
-  # more seasons than that, later seasons fall back to scalar = 1 in the ODE,
-  # which is likely not what the user intended — warn so they can extend the
-  # configuration (e.g. add season4_effect) or shorten n_days.
+  # ---- Sanity check: per-season beta coverage ----
+  # The ODE takes the transmission rate for the current season directly from
+  # beta_A_s1/s2/s3, indexed by the season number from get_season_number().
+  # If the simulation spans more seasons than are configured, later seasons
+  # CARRY FORWARD the last configured beta (see the ODE below) - warn so the
+  # user can add an explicit beta for those seasons or shorten n_days.
   n_seasons_simulated = get_season_number(end_date, start_date)
-  n_seasons_configured = length(c(1, p$season2_effect, p$season3_effect))
+  n_seasons_configured = length(c(p$beta_A_s1, p$beta_A_s2, p$beta_A_s3))
   if (n_seasons_simulated > n_seasons_configured)
     warning("Simulation spans ", n_seasons_simulated, " seasons but only ",
-            n_seasons_configured, " season_effect values are configured ",
-            "(season1 = 1, season2_effect, season3_effect). Seasons ",
+            n_seasons_configured, " per-season transmission rates are ",
+            "configured (beta_A_s1, beta_A_s2, beta_A_s3). Seasons ",
             n_seasons_configured + 1, "-", n_seasons_simulated,
-            " will use scalar = 1. Either shorten n_days or extend ",
-            "season_effect in the yaml.")
+            " will reuse beta_A_s", n_seasons_configured,
+            ". Either shorten n_days or add further beta_A_s* values.")
   
   # Solve ODE model.
   # Solver method is set in options.R (o$ode_method) - see the note there on
@@ -243,17 +242,33 @@ rsv_model = function(t, y, p){
     # Used to apply year-to-year scalars on beta.
     season_nr = get_season_number(p$start_date + t - 1, p$start_date)
 
-    # Per-season scalar on transmission rate. Seasons beyond the configured
-    # ones fall back to 1.0 so beta stays defined for long simulations.
-    season_effect = c(1, p$season2_effect, p$season3_effect)
-    season_scalar = if (season_nr >= 1 && season_nr <= length(season_effect))
-                      season_effect[season_nr] else 1
+    # Per-season transmission rate, taken DIRECTLY rather than as a scalar on a
+    # shared baseline. Previously this was beta_A * c(1, season2_effect,
+    # season3_effect), which pinned season 1 at exactly 1.0: beta_A had to set
+    # the overall level AND fit season 1 simultaneously, while seasons 2 and 3
+    # each had a free scalar to correct themselves. Season 1 therefore absorbed
+    # every compromise in the fit. Each season now has its own absolute rate, so
+    # no season is the reference and none drags the others.
+    #
+    # This is a REPARAMETERISATION, not an extra degree of freedom: three free
+    # values before (beta_A, season2_effect, season3_effect) and three after.
+    # NB adding a fourth "season1_effect" alongside beta_A would instead have
+    # been non-identifiable - halving beta_A and doubling all three scalars
+    # gives an identical likelihood.
+    #
+    # Seasons beyond the configured ones CARRY FORWARD the last rate. The old
+    # code fell back to scalar = 1, i.e. projected future seasons at season 1's
+    # transmission; carrying the most recent fitted season forward is the more
+    # defensible default for the scenario projections, which run past the data.
+    season_beta = c(p$beta_A_s1, p$beta_A_s2, p$beta_A_s3)
+    beta_A_t    = if (season_nr >= 1 && season_nr <= length(season_beta))
+                    season_beta[season_nr] else season_beta[length(season_beta)]
 
     # Force of infection (strain A): per-contact transmission probability,
     # scaled by seasonality and behavioural change, weighted by the
     # prevalence of infectiousness per contact, then mixed through the
     # contact matrix to give the per-susceptible hazard by age group.
-    FoI_tmp  = p$beta_A * season_scalar * seasonality_factor * p$contact_scalar *
+    FoI_tmp  = beta_A_t * seasonality_factor * p$contact_scalar *
                (infectious_A / p$population$population)
     lambda_A = rowSums(matrix(rep(FoI_tmp, p$n_age), ncol = p$n_age, byrow = TRUE) * p$contact_matrix)
 

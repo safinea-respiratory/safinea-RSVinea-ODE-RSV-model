@@ -20,7 +20,10 @@
 n_days: 1000
 
 # Transmission rate at baseline susceptibility (defined as oldest age group) and seasonal maximum
-beta_A: 0.012 # transmission rate
+# Per-season transmission rates (absolute, not scalars on a shared beta).
+beta_A_s1: 0.0120 # season 1
+beta_A_s2: 0.0108 # season 2 (was beta_A * season2_effect = 0.012 * 0.9)
+beta_A_s3: 0.0108 # season 3 (was beta_A * season3_effect = 0.012 * 0.9)
 
 # Seasonality profile
 amplitude: 0.0 # 
@@ -50,12 +53,6 @@ calibration_parameters:
 - param: "seasonality_exponent"
   lower: 0.5
   upper: 2.0
-- param: "season2_effect"
-  lower: 0.7
-  upper: 1.1
-- param: "season3_effect"
-  lower: 0.7
-  upper: 1.1
 - param: "vaccination_catch_up_coverage"
   lower: 0.4
   upper: 0.9
@@ -73,9 +70,19 @@ calibration_parameters:
 - param: "p_hosp_c_A"     # 65+y   (was rel_hosp_c_A [5, 18])
   lower: 0.00050
   upper: 0.00396
-- param: "beta_A"
-  lower: 0.050
-  upper: 0.120
+# Per-season transmission rates - absolute, NOT scalars on a shared beta.
+# Converted from beta_A [0.050, 0.120] with season2/3_effect [0.7, 1.1] as
+# [beta_lower * eff_lower, beta_upper * eff_upper], which is exactly the set
+# of rates each season could reach before, so reachability is preserved.
+- param: "beta_A_s1"    # season 1 (was beta_A, scalar pinned at 1.0)
+  lower: 0.0500
+  upper: 0.1200
+- param: "beta_A_s2"    # season 2 (was beta_A x season2_effect)
+  lower: 0.0350
+  upper: 0.1320
+- param: "beta_A_s3"    # season 3 (was beta_A x season3_effect)
+  lower: 0.0350
+  upper: 0.1320
 - param: "p_hosp_A"     # 5-65y only, now that the bands are decoupled
   lower: 0.000100
   upper: 0.000220

@@ -151,10 +151,14 @@ write_parameter_table = function(o) {
 # Combine general and age-specific parameters ----
 # -------------------------------------------------------- -
 adjust_age_specific_param = function(param_data){
-  param_data$qi_a <- param_data$beta_A * param_data$rel_sus_a
-  param_data$qi_b <- param_data$beta_A * param_data$rel_sus_b
-  param_data$qi_c <- param_data$beta_A * param_data$rel_sus_c
-  param_data$qi_d <- param_data$beta_A 
+  # Transmission is now per-season (beta_A_s1/s2/s3); there is no single
+  # beta_A. Report the age-specific rates against SEASON 1 as the reference
+  # season - the age pattern (rel_sus_*) is shared across seasons, so only
+  # the level differs between them.
+  param_data$qi_a <- param_data$beta_A_s1 * param_data$rel_sus_a
+  param_data$qi_b <- param_data$beta_A_s1 * param_data$rel_sus_b
+  param_data$qi_c <- param_data$beta_A_s1 * param_data$rel_sus_c
+  param_data$qi_d <- param_data$beta_A_s1 
   
   # Hospitalisation probabilities are now ABSOLUTE per band (see
   # compute_p_hosp_A_row in model.R), so these are direct reads rather than
