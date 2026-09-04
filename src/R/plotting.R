@@ -548,6 +548,8 @@ plot_best_samples = function(o, fit, fig_name, round_idx) {
     
   }
   
+  #if (fit$input$adaptive_sampling$rounds == as.integer(str_split(round_idx,"r")[[1]][[2]])) browser()
+  
   if (!is.null(fig_name))
     fig_save(o, g1, paste0(fig_name, "_fit"), round_idx)
   
