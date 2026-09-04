@@ -52,10 +52,7 @@ contact_matrix_countries: IRL  # ISO 3166-1 alpha-3 country codes (en.wikipedia.
 calibration_parameters:
 - param: "seasonality_exponent"
   lower: 0.5
-  upper: 2.0
-- param: "vaccination_catch_up_coverage"
-  lower: 0.4
-  upper: 0.9
+  upper: 1.5
 # Absolute P(hosp | infection) for each anchor band - NOT multipliers.
 # Converted from the previous rel_hosp_*_A multipliers as
 # [p_hosp_A_lower * rel_lower, p_hosp_A_upper * rel_upper], which is exactly
@@ -63,44 +60,44 @@ calibration_parameters:
 # preserved while the bands are decoupled.
 - param: "p_hosp_a_A"     # 0-3m   (was rel_hosp_a_A [80, 150])
   lower: 0.00800
-  upper: 0.03300
+  upper: 0.02500
 - param: "p_hosp_b_A"     # 1-5y   (was rel_hosp_b_A [15, 40])
-  lower: 0.00150
-  upper: 0.00880
+  lower: 0.00400
+  upper: 0.00600
 - param: "p_hosp_c_A"     # 65+y   (was rel_hosp_c_A [5, 18])
-  lower: 0.00050
-  upper: 0.00396
+  lower: 0.00150
+  upper: 0.00250
+- param: "p_hosp_A"     # 5-65y only, now that the bands are decoupled
+  lower: 0.000100
+  upper: 0.000200
 # Per-season transmission rates - absolute, NOT scalars on a shared beta.
 # Converted from beta_A [0.050, 0.120] with season2/3_effect [0.7, 1.1] as
 # [beta_lower * eff_lower, beta_upper * eff_upper], which is exactly the set
 # of rates each season could reach before, so reachability is preserved.
 - param: "beta_A_s1"    # season 1 (was beta_A, scalar pinned at 1.0)
-  lower: 0.0500
-  upper: 0.1200
+  lower: 0.0700
+  upper: 0.0850
 - param: "beta_A_s2"    # season 2 (was beta_A x season2_effect)
-  lower: 0.0350
-  upper: 0.1320
+  lower: 0.065
+  upper: 0.075
 - param: "beta_A_s3"    # season 3 (was beta_A x season3_effect)
-  lower: 0.0350
-  upper: 0.1320
-- param: "p_hosp_A"     # 5-65y only, now that the bands are decoupled
-  lower: 0.000100
-  upper: 0.000220
+  lower: 0.065
+  upper: 0.075
 - param: "init_inf"
-  lower: 0.03
-  upper: 0.20
+  lower: 0.15
+  upper: 0.25
 - param: "omega"
-  lower: 80
+  lower: 50
   upper: 300
 - param: "k"
-  lower: 0.1
+  lower: 10
   upper: 100
 - param: "peak_day"
   lower: 110
   upper: 130
 - param: "amplitude"
   lower: 0.15
-  upper: 0.35 
+  upper: 0.25
 
 # Additional options for calibration
 calibration_options:

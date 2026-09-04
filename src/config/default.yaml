@@ -227,7 +227,7 @@ vaccination_end: ["2025-02-28", "2026-02-28"]
 # Catch up period (e.g., infants born outside of the RSV season)
 vaccination_catch_up_date: "2025-09-01"
 vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m" ]
-vaccination_catch_up_coverage: 0.40
+vaccination_catch_up_coverage: 0.52
 
 # 
 seasonality_exponent: 1
@@ -292,8 +292,8 @@ calibration_weights:
 adaptive_sampling:
   # NB: the loop runs r_val in 0:rounds, so `rounds: 10` means ELEVEN rounds -
   # r0 (initial Latin hypercube) plus r1-r10 of resample-and-perturb.
-  rounds: 10        # Number of rounds (set to 0 to turn adaptive sampling off)
-  init_samples: 100  # Number of parameter sets per round
+  rounds: 30        # Number of rounds (set to 0 to turn adaptive sampling off)
+  init_samples: 200  # Number of parameter sets per round
 
 vacc_coverage: 0.83 # vaccination coverage
 vacc_IE: # Immunisation effectiveness, given by respicompass
