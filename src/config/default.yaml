@@ -418,20 +418,16 @@ adaptive_sampling:
 # Every entry listed here is simulated by run_scenarios() (do_step 2), which
 # enumerates this list via parse_yaml(o, "*create*"). The baseline entry must
 # always be present: parse_scenarios() reads y$scenarios$baseline$name for it.
-#
-# CURRENTLY BASELINE ONLY. The vaccination scenarios are retained below,
-# commented out, so they can be switched back on by uncommenting. Each one adds
-# a full set of simulations per country, so keep them off while the calibration
-# is still being tuned.
+
 scenarios:
 - id: baseline
   name: "Baseline scenario"
 - id: low_vacc
   name: "Low vaccination scenario"
-  adult_vacc_coverage: 0.20
+  adult_vacc_coverage: 0.25
 - id: high_vacc
   name: "High vaccination scenario"
-  adult_vacc_coverage: 0.70
+  adult_vacc_coverage: 0.75
 - id: super_high_vacc
   name: "Super high vaccination scenario"
   adult_vacc_coverage: 0.98
