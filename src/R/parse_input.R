@@ -171,6 +171,49 @@ overwrite_defaults = function(y, y_overwrite) {
     # Drop these function items from recursive overwriting
     overwrite_items = overwrite_items[!fn_item_idx]
   }
+
+  # ---- Vector-valued items ----
+  #
+  # unlist_format() flattens an atomic vector into indexed names, so
+  #   vacc_coverage: [0.90, 0.90]
+  # becomes the items `vacc_coverage1` and `vacc_coverage2`. Neither name
+  # resolves in the overwrite list OR in the defaults, so both lookups return
+  # NULL, the class check trivially passes (NULL == NULL), and the assignment
+  # further below builds get('as.NULL')() - failing with
+  # "object 'as.NULL' not found".
+  #
+  # Any top-level item whose value is an atomic vector of length > 1 is
+  # therefore assigned whole here, and excluded from the flattened loop. This
+  # covers yearly vacc_coverage and any other vector parameter a user file or
+  # scenario overrides (e.g. vaccination_start / vaccination_end).
+  is_vec    = vapply(y_overwrite, function(v) is.atomic(v) && length(v) > 1, logical(1))
+  vec_items = names(y_overwrite)[is_vec]
+
+  for (vec_item in vec_items) {
+
+    default_value = y[[vec_item]]
+
+    # Class must still be consistent with the default, where there is one
+    if (length(default_value) > 0) {
+      default_class = class(unlist(default_value))
+      new_class     = class(y_overwrite[[vec_item]])
+      if (!identical(default_class, new_class))
+        stop("Inconsistent data class in input yaml file: 
+",
+             paste0(" ! ", vec_item, ": ", default_class, " -> ", new_class, "
+"))
+    }
+
+    # Assign the vector whole, rather than element by element
+    y[[vec_item]] = y_overwrite[[vec_item]]
+  }
+
+  # Drop the flattened forms of those items from the loop below
+  if (length(vec_items) > 0) {
+    vec_idx = grepl(paste0("^(", paste0(vec_items, collapse = "|"), ")[0-9]*$"),
+                    overwrite_items)
+    overwrite_items = overwrite_items[!vec_idx]
+  }
   
   # ---- Overwrite defaults ----
   

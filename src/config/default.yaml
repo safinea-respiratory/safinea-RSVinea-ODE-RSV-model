@@ -226,7 +226,7 @@ vaccination_start: ["2024-09-01", "2025-09-01"]
 vaccination_end: ["2025-02-28", "2026-02-28"]
 # Catch up period (e.g., infants born outside of the RSV season)
 vaccination_catch_up_date: "2025-09-01"
-vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m" ]
+vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m"]
 vaccination_catch_up_coverage: 0.52
 
 # 
@@ -295,7 +295,18 @@ adaptive_sampling:
   rounds: 30        # Number of rounds (set to 0 to turn adaptive sampling off)
   init_samples: 200  # Number of parameter sets per round
 
-vacc_coverage: 0.83 # vaccination coverage
+# Infant immunisation uptake (maternal vaccination / mAbs), as the proportion
+# of each month's births entering V0 rather than S0.
+#
+# Give either ONE VALUE PER VACCINATION WINDOW, parallel to vaccination_start /
+# vaccination_end above, so uptake can differ from year to year - or a single
+# value, which is applied to every window. The scenarios below use the single
+# form to switch the whole programme off or up at once.
+#
+#   vaccination_start: ["2024-09-01", "2025-09-01"]
+#   vacc_coverage:     [0.83,         0.83]
+#                       2024/25       2025/26
+vacc_coverage: [0.83, 0.87] # yearly uptake, one per vaccination window
 vacc_IE: # Immunisation effectiveness, given by respicompass
     uncertainty:
       fn: "norm"  # Options: unif (min, max), norm (mean, sd), pois (lambda)
@@ -312,9 +323,16 @@ scenarios:
   vacc_coverage: 0.0
   vacc_IE: 0.0
   vaccination_catch_up_coverage: 0.0
-- id: high_vacc   
-  name: "High vaccination scenario"
-  vacc_coverage: 0.95
+- id: catch_up_40   
+  name: "Catch up scenario 40%"
+  vaccination_catch_up_coverage: 0.40
+- id: catch_up_60   
+  name: "Catch up scenario 60%"
+  vaccination_catch_up_coverage: 0.60
+- id: catch_up_80   
+  name: "Catch up scenario 80%"
   vaccination_catch_up_coverage: 0.80
-
+- id: newborn_high
+  name: "High newborn 90%"
+  vacc_coverage: [0.83, 0.90] 
 

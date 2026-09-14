@@ -145,6 +145,23 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
             " will reuse beta_A_s", n_seasons_configured,
             ". Either shorten n_days or add further beta_A_s* values.")
   
+  # ---- Sanity check: vaccination window / coverage coverage ----
+  # vacc_coverage is either one value per vaccination window (yearly uptake) or
+  # a single value recycled across all of them. Anything else is a config error
+  # that would otherwise pick the wrong year's uptake silently.
+  n_windows = length(p$vaccination_start)
+  if (length(p$vaccination_end) != n_windows)
+    stop("vaccination_start has ", n_windows, " entries but vaccination_end has ",
+         length(p$vaccination_end), " - they must be parallel.")
+  n_cov = length(unlist(p$vacc_coverage))
+  if (!n_cov %in% c(1L, n_windows))
+    stop("vacc_coverage has ", n_cov, " value(s) but there are ", n_windows,
+         " vaccination window(s). Supply either one coverage per window ",
+         "(yearly uptake) or a single value to apply to all of them.")
+  if (any(unlist(p$vacc_coverage) < 0 | unlist(p$vacc_coverage) > 1))
+    stop("vacc_coverage must be a proportion in [0, 1]; got ",
+         paste(signif(unlist(p$vacc_coverage), 4), collapse = ", "))
+
   # Solve ODE model.
   # Solver method is set in options.R (o$ode_method) - see the note there on
   # why a non-stiff solver can beat a dense-Jacobian stiff one for this system.
@@ -436,9 +453,22 @@ ageing_event <- function(t, y, parms) {
     return(y)
   }
   
-  # Define vaccination coverage
-  if (any(current_date >= ymd(parms$vaccination_start) & current_date <= ymd(parms$vaccination_end))){
-    vacc_coverage = parms$vacc_coverage
+  # Define vaccination coverage for THIS vaccination window.
+  #
+  # vacc_coverage may be given either as one value per window in
+  # vaccination_start/vaccination_end (so uptake can differ from year to year,
+  # which is what real programmes do), or as a single value that applies to
+  # every window. The single-value form is what the scenarios use, e.g.
+  # no_vacc sets vacc_coverage: 0.0 and expects it to hold for all years.
+  in_window = current_date >= ymd(parms$vaccination_start) &
+              current_date <= ymd(parms$vaccination_end)
+  if (any(in_window)) {
+    cov = unlist(parms$vacc_coverage)
+    # Recycle a single value across all windows (backwards compatible, and what
+    # a scenario override supplies)
+    if (length(cov) == 1L) cov = rep(cov, length(parms$vaccination_start))
+    # Windows are not expected to overlap; if they do, the earliest one wins
+    vacc_coverage = cov[which(in_window)[1]]
   } else {
     vacc_coverage = 0 # If we are outside of vaccination period, no vaccination occurs
   }

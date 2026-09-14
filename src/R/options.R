@@ -131,7 +131,7 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
 
   # ---- Scenario settings ----
   # Number of sampled parameter sets from calibration to use in scenarios
-  o$n_best_samples = 10
+  o$n_best_samples = 50
   
   # Number of uncertainty parameter sets to sample 
   o$n_parameter_sets = 10 # Best to set to 1 if not simulating parameter uncertainty
