@@ -81,7 +81,7 @@ age_group_map:
 
 # Number of days to simulate
 # This must be at least the sum of the burn-in period and the fitting dates
-n_days: 210
+n_days: 730
 
 # ---- Observation-model over-dispersion ----
 # Dispersion of the negative-binomial likelihood used to compare model output
@@ -305,6 +305,11 @@ infant_vacc_coverage: 0.0
 # file supplies absolute VE rather than an amplitude to scale. They are kept so
 # that existing country yamls and scenario overrides referencing them do not
 # error; delete them once nothing refers to them.
+#
+# NB DOSE ACCOUNTING: doses are counted as adult_vacc_coverage x the WHOLE
+# eligible population, whereas only the susceptible fraction actually enters the
+# waning chain and gains protection. See the dose-accounting note in
+# ageing_event() (model.R) before interpreting doses-per-case-averted.
 adult_vacc_coverage: 0.0 # Set per country (e.g. IE.yaml); default 0 means no adult vaccination
 adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
 # Waning chain length, in months. Stage j holds people vaccinated j-1 months
@@ -328,8 +333,18 @@ infant_vaccination_catch_up_agegroup: ["1-2m", "2-3m", "3-4m", "4-5m", "5-6m"]
 infant_vaccination_catch_up_coverage: 0.00
 
 # ---- Adult vaccination schedule ----
-# Single annual campaign date(s); eligible adults are vaccinated on this date each year
-adult_vaccination_dates: ["2026-10-01"]
+# Single annual campaign date(s); eligible adults are vaccinated on this date each year.
+#
+# FIXED BY PROJECT DECISION: 1 November 2026. The RespiCompass round-1 text says
+# all eligible individuals are vaccinated at the start of the scenario period
+# (1 Sep 2026); we deliberately use 1 Nov 2026 instead, as a more realistic
+# representation of when a national autumn campaign actually reaches people.
+# Do NOT "correct" this back to September on the basis of the hub text.
+#
+# NB a campaign date only fires if it is the first of a month, because the
+# campaign is applied inside the monthly ageing event - see ageing_event()
+# in model.R.
+adult_vaccination_dates: ["2026-11-01"]
 
 # 
 #season_effect: [1.03, 1.0, 0.95]
@@ -422,14 +437,93 @@ adaptive_sampling:
 scenarios:
 - id: baseline
   name: "Baseline scenario"
-- id: low_vacc
-  name: "Low vaccination scenario"
+  adult_vacc_coverage: 0.0
+  adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+######################################
+#############  25% coverage ##########
+######################################
+- id: A.1-25
+  name: "60+ age group, 25% uptake"
   adult_vacc_coverage: 0.25
-- id: high_vacc
-  name: "High vaccination scenario"
-  adult_vacc_coverage: 0.75
-- id: super_high_vacc
-  name: "Super high vaccination scenario"
-  adult_vacc_coverage: 0.98
+  adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.2-25
+  name: "65+ age group, 25% uptake"
+  adult_vacc_coverage: 0.25
+  adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.3-25
+  name: "70+ age group, 25% uptake"
+  adult_vacc_coverage: 0.25
+  adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.4-25
+  name: "75+ age group, 25% uptake"
+  adult_vacc_coverage: 0.25
+  adult_vaccination_agegroups: ["75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.5-25
+  name: "80+ age group, 25% uptake"
+  adult_vacc_coverage: 0.25
+  adult_vaccination_agegroups: ["80+y"]
+  infant_vacc_coverage: 0.0
+######################################
+#############  50% coverage ##########
+######################################
+# - id: A.1-50
+#   name: "60+ age group, 50% uptake"
+#   adult_vacc_coverage: 0.50
+#   adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.2-50
+#   name: "65+ age group, 50% uptake"
+#   adult_vacc_coverage: 0.50
+#   adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.3-50
+#   name: "70+ age group, 50% uptake"
+#   adult_vacc_coverage: 0.50
+#   adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.4-50
+#   name: "75+ age group, 50% uptake"
+#   adult_vacc_coverage: 0.50
+#   adult_vaccination_agegroups: ["75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.5-50
+#   name: "80+ age group, 50% uptake"
+#   adult_vacc_coverage: 0.50
+#   adult_vaccination_agegroups: ["80+y"]
+#   infant_vacc_coverage: 0.0
+######################################
+#############  75% coverage ##########
+######################################
+# - id: A.1-75
+#   name: "60+ age group, 75% uptake"
+#   adult_vacc_coverage: 0.75
+#   adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.2-75
+#   name: "65+ age group, 75% uptake"
+#   adult_vacc_coverage: 0.75
+#   adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.3-75
+#   name: "70+ age group, 75% uptake"
+#   adult_vacc_coverage: 0.75
+#   adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.4-75
+#   name: "75+ age group, 75% uptake"
+#   adult_vacc_coverage: 0.75
+#   adult_vaccination_agegroups: ["75-79y", "80+y"]
+#   infant_vacc_coverage: 0.0
+# - id: A.5-75
+#   name: "80+ age group, 75% uptake"
+#   adult_vacc_coverage: 0.75
+#   adult_vaccination_agegroups: ["80+y"]
+#   infant_vacc_coverage: 0.0
 
 
+  

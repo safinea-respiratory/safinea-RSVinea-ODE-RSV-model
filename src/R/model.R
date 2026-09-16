@@ -57,7 +57,24 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   row.names(p$contact_matrix) = p$age_groups
   colnames(p$contact_matrix) = p$age_groups
   p$n_age = length(p$age_groups)
-  
+
+  # ---- Validate age-group references ----
+  # Every yaml/scenario field that names age groups is matched against
+  # p$age_groups with %in%, which returns FALSE (not an error) for a label that
+  # does not exist. A single-character slip such as "60-64" instead of "60-64y"
+  # therefore used to remove a whole band from a vaccination campaign silently:
+  # the "60+" scenarios quietly became identical to their "65+" counterparts.
+  # Fail loudly instead.
+  for (.fld in c("adult_vaccination_agegroups",
+                 "infant_vaccination_catch_up_agegroup")) {
+    .val = unlist(p[[.fld]])
+    .bad = setdiff(.val, p$age_groups)
+    if (length(.bad) > 0)
+      stop("Unrecognised age group(s) in '", .fld, "': ",
+           paste(.bad, collapse = ", "),
+           "\n  Valid age groups are: ", paste(p$age_groups, collapse = ", "))
+  }
+
   # Age group mapping to match data and risk vectors (defined in default.yaml)
   p$age_group_map = data.frame(
     smaller_group = p$age_groups,
@@ -259,13 +276,35 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # the effective horizon, so they follow the simulation period automatically.
   p$start_date = min(dates_df$date)
   start_date <- p$start_date
-  end_date   <- p$start_date + n_days_eff
+  end_date   <- p$start_date + n_days_eff - 1
   from <- if_else(day(start_date) == 1, # if the first day is start of the month
                   floor_date(start_date, "month"),
                   ceiling_date(start_date, "month"))
   to <- floor_date(end_date, "month")
   event_dates <- seq(from, to, by = "1 month")
-  event_times <- as.numeric(event_dates - p$start_date)
+
+  # ---- TIME CONVENTION (t <-> calendar date) ----
+  # ONE convention is used everywhere: t = 1 is start_date, i.e.
+  #     date = start_date + t - 1
+  # rsv_model() uses it (the p_hosp_A and season lookups), ageing_event() uses
+  # it, and plotting.R / results_evaluation.R assume it when they join model
+  # `time` to a 1-based date sequence. Event times are therefore offset by +1
+  # relative to a naive days-since-start difference.
+  #
+  # This previously disagreed with itself. event_times were plain
+  # days-since-start (0, 30, 61, ...) and ageing_event() read them back as
+  # start_date + t, so the events did fire on the intended CALENDAR dates - but
+  # the output row carrying each change is labelled start_date + t - 1, so every
+  # ageing / birth / vaccination step showed up in the results one day EARLY.
+  # Two further side effects of the leading t = 0:
+  #   - deSolve auto-inserts event times that are outside `times` (it warns
+  #     "not all event times are in output 'times'"), so the result came back
+  #     with 731 rows, t = 0..730, instead of 730.
+  #   - that inflated `duration` downstream by one, and the t = 0 row was then
+  #     silently dropped by the inner_join against the date table.
+  # Offsetting by +1 puts every event inside the times grid and on the same
+  # clock as the rest of the pipeline.
+  event_times <- as.numeric(event_dates - p$start_date) + 1
 
   # ---- Sanity check: season_effect coverage ----
   # The ODE applies a per-season scalar on beta, indexed by the season number
@@ -649,8 +688,10 @@ rsv_model = function(t, y, p){
 #    c. Adult campaign: on each adult_vaccination_dates, a fraction
 #       adult_vacc_coverage of S1/S2/S3 in adult_vaccination_agegroups
 #       is moved into V1_1/V2_1/V3_1 (entering the waning chain at stage 1).
-#    Every dose administered (a + b + c) is added to the cumulative n_doses
-#    counter by age group.
+#    Doses (a + b + c) are added to the cumulative n_doses counter by age group.
+#    NB for the ADULT campaign the dose count uses the WHOLE eligible
+#    population, not just the susceptibles who actually gain protection - see
+#    the dose-accounting note in step 3b.
 #
 # 4. BACKGROUND (NON-RSV) MORTALITY: every living compartment is scaled by an
 #    age-specific monthly survival factor. This is the demographic outflow
@@ -672,8 +713,11 @@ ageing_event <- function(t, y, parms) {
   widths <- sapply(age_labels, bin_width_months)
   new_y  <- y  # copy to modify
 
-  # Current event date (origin is parms$start_date)
-  current_date <- parms$start_date + round(t)
+  # Current event date. Uses the single model-wide convention t = 1 <-> start_date
+  # (see TIME CONVENTION in model() above); this previously read `+ round(t)`,
+  # which put every ageing/vaccination event one day later than the date the
+  # same `t` is labelled with everywhere else in the pipeline.
+  current_date <- parms$start_date + round(t) - 1
   if (day(current_date) != 1) return(y)
 
   # ---- 1. Demographic ageing (all compartments) ----
@@ -766,19 +810,92 @@ ageing_event <- function(t, y, parms) {
   # ---- 3b. Adult vaccination campaign ----
   # On each campaign date, move adult_vacc_coverage fraction of S1/S2/S3
   # in the eligible age groups into V1_1/V2_1/V3_1 (waning chain stage 1).
+  #
+  # !!! DOSE ACCOUNTING — DELIBERATE CHOICE, READ WHEN INTERPRETING RESULTS !!!
+  # PROTECTION and DOSES use DIFFERENT denominators:
+  #
+  #   protection -> only SUSCEPTIBLES move into the waning chain. Someone who is
+  #                 currently exposed/infectious/recovered gains nothing in this
+  #                 model from being vaccinated, so moving them would overstate
+  #                 the benefit.
+  #   doses      -> counted on the WHOLE LIVING ELIGIBLE POPULATION, i.e.
+  #                 coverage x population in the eligible age bands, including
+  #                 the people who are NOT in S and therefore get no modelled
+  #                 protection ("doses that were not administered but should
+  #                 be", in the sense that a real campaign would have given them).
+  #
+  # Consequence when evaluating results: `n_doses` reconciles exactly with
+  # coverage x population_estimates.csv, which is what RespiCompass expects for
+  # the `administered_doses` target; but doses-per-hospitalisation-averted is
+  # therefore a CONSERVATIVE (pessimistic) efficiency measure, because a
+  # fraction of the counted doses is assumed to do nothing. Do not read the
+  # gap between doses and V-compartment entries as a model inconsistency.
+  #
+  # ---------------------------------------------------------------------------
+  # WHY S ONLY, AND NOT S + R? (considered and deliberately rejected)
+  # ---------------------------------------------------------------------------
+  # It looks sensible to vaccinate the RECOVERED too, on the grounds that vaccine
+  # immunity wanes more slowly than natural immunity (mean omega ~200 days vs a
+  # vaccine half-life of ~31 months on the hub's baseline curves). It is not,
+  # because of how R is specified HERE:
+  #
+  #   R_k is STERILISING - there is no force-of-infection term in dR_k at all.
+  #   Its only outflow is (1/omega) -> S_{k+1}. So R = 0 susceptibility, whereas
+  #   V_3_1 = prior_3infection_protection x (1 - VE_inf) = 0.40 x 0.234 = 0.094.
+  #   NB prior_*infection_protection is a RELATIVE SUSCEPTIBILITY MULTIPLIER,
+  #   not a protection fraction - see the dS1/dS2/dS3 terms in rsv_model().
+  #
+  # Moving R -> V is therefore an IMMEDIATE DOWNGRADE from 0 to 0.094, in every
+  # scenario - this is not specific to the faster-waning curves. It only pays
+  # back once VE(t) > exp(-t/omega):
+  #
+  #     omega      baseline waning        2x faster waning
+  #     100 d      payback at 1.2 months  never
+  #     200 d      payback at 4.2 months  never
+  #     300 d      payback at 21.4 months never
+  #
+  # Two reasons that is unacceptable:
+  #   1. The harmful window IS the epidemic peak. peak_day priors of 100-160
+  #      days from 2026-09-01 put the peak 1.2-3.2 months after the 1 Nov
+  #      campaign, i.e. inside the payback window for any omega >= ~200 d.
+  #   2. omega is FITTED per country over a 100-300 d prior, so the SIGN of the
+  #      effect would vary by country and by posterior draw - an intervention
+  #      that helps in some countries and harms in others for reasons that are
+  #      pure compartment bookkeeping, not epidemiology.
+  #
+  # The same argument rules out vaccinating E and I.
+  #
+  # If the benefit for already-immune people is ever wanted, the correct
+  # mechanism is NOT R -> V but a parallel vaccinated-recovered pool R_k^v that
+  # KEEPS full natural protection and drains at 1/omega into V_{k+1}_1 (about
+  # +105 states, ~4%). That is an UPPER bound, since the vaccine clock restarts
+  # on exit; the exact version needs a joint (tier x vaccine-age) chain, roughly
+  # +2,500 states, which would about double the system. S-only and the holding
+  # pool bracket the truth from below and above.
   if (any(current_date == ymd(parms$adult_vaccination_dates))) {
-    idx_nd_ad <- which(prefixes == "n_doses" &
-                       age_labels %in% parms$adult_vaccination_agegroups)
+
+    elig      <- parms$adult_vaccination_agegroups
+    idx_nd_ad <- which(prefixes == "n_doses" & age_labels %in% elig)
+
+    # Eligible population per age group, BEFORE the S -> V move. Summed over
+    # every living compartment (the S -> V move is internal to the living pool,
+    # so the order does not actually matter, but this is the clearer reading).
+    idx_living_elig <- which(!(prefixes %in% c("D0", "D1", "D2", "D3", "n_doses")) &
+                             age_labels %in% elig)
+    pop_elig <- tapply(new_y[idx_living_elig], age_labels[idx_living_elig], sum)
+
+    # Protection: susceptibles only.
     for (k in 1:3) {
-      idx_Sk  <- which(prefixes == paste0("S", k) &
-                       age_labels %in% parms$adult_vaccination_agegroups)
-      idx_Vk1 <- which(prefixes == paste0("V", k, "_1") &
-                       age_labels %in% parms$adult_vaccination_agegroups)
-      to_vacc          <- new_y[idx_Sk] * parms$adult_vacc_coverage
-      new_y[idx_Sk]    <- new_y[idx_Sk]  - to_vacc
-      new_y[idx_Vk1]   <- new_y[idx_Vk1] + to_vacc
-      new_y[idx_nd_ad] <- new_y[idx_nd_ad] + to_vacc  # count adult doses (summed over tiers)
+      idx_Sk  <- which(prefixes == paste0("S", k) & age_labels %in% elig)
+      idx_Vk1 <- which(prefixes == paste0("V", k, "_1") & age_labels %in% elig)
+      to_vacc        <- new_y[idx_Sk] * parms$adult_vacc_coverage
+      new_y[idx_Sk]  <- new_y[idx_Sk]  - to_vacc
+      new_y[idx_Vk1] <- new_y[idx_Vk1] + to_vacc
     }
+
+    # Doses: whole eligible population (see the note above).
+    new_y[idx_nd_ad] <- new_y[idx_nd_ad] +
+      parms$adult_vacc_coverage * as.numeric(pop_elig[age_labels[idx_nd_ad]])
   }
 
   # ---- 4. Background (non-RSV) mortality ----
