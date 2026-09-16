@@ -210,8 +210,18 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA,
   o$plot_only = FALSE
 
   # ---- Scenario settings ----
-  # Number of sampled parameter sets from calibration to use in scenarios
-  o$n_best_samples = 10
+  # Number of sampled parameter sets from calibration to use in scenarios.
+  #
+  # RespiCompass requires 100-300 trajectories (output_type = 'sample') per
+  # scenario, so this is the submission-compliant setting. It also fixes how
+  # many adult waning-curve replicates are explored (sample i uses waning rep i
+  # - see get_waning_curve() in auxiliary.R), so 100 samples = 100 of the hub's
+  # 500 replicate curves.
+  #
+  # RUNTIME: this is a 10x increase on the previous value of 10 and the scenario
+  # sweep scales linearly with it. Drop it back to ~10 for quick local testing,
+  # but never for a submission run.
+  o$n_best_samples = 5
   
   # Number of uncertainty parameter sets to sample 
   o$n_parameter_sets = 1 # Best to set to 1 if not simulating parameter uncertainty
