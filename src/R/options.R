@@ -8,7 +8,8 @@
 # -------------------------------------------------------- -
 # Set model options and assumptions ----
 # -------------------------------------------------------- -
-set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
+set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA,
+                       refresh_cache = FALSE) {
 
   if (!quiet) message("* Setting options")
 
@@ -42,12 +43,16 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
   # local cache and the o$*_url paths point at the local copies; all the
   # downstream read.csv() calls are unchanged and simply read from disk.
   #
-  # Set o$refresh_cache = TRUE (or delete the cache directory) to re-download,
-  # e.g. when RespiCompass updates a round's data.
+  # Pass refresh_cache = TRUE to set_options() (or delete the cache directory) to
+  # re-download, e.g. when RespiCompass updates a round's data. NB this used to
+  # be documented as `o$refresh_cache`, which could never be set: `o` is built
+  # inside this function, so the flag was always FALSE and the cache was never
+  # refreshable without deleting files by hand.
   respicompass_raw = "https://raw.githubusercontent.com/european-modelling-hubs/RespiCompass/refs/heads/main/"
   cache_dir = file.path("data", "respicompass_cache")
   if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE)
-  refresh = isTRUE(o$refresh_cache)
+  refresh = isTRUE(refresh_cache)
+  o$refresh_cache = refresh
 
   cache_file = function(url) {
     dest = file.path(cache_dir, basename(url))
@@ -105,9 +110,16 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
 
   # ---- General data ----
   # Monthly births (real counts). RespiCompass supplies only the reference
-  # season (2026-09 to 2027-08), but the modelling period spans two seasons, so
-  # repeat the same monthly births forward one year to populate newborns in the
-  # 2027/28 season (assumes births are stable year-to-year). Country is ISO-2.
+  # season (2026-09-01 to 2027-08-01, 12 monthly rows), but the modelling period
+  # spans two seasons, so repeat the same monthly births forward one year to
+  # populate newborns in the 2027/28 season (assumes births are stable
+  # year-to-year). Country is ISO-2.
+  #
+  # NB: if the hub ever extends the file to cover both seasons, the shifted rows
+  # become DUPLICATES of real ones. ageing_event() resolves the month with
+  # match(), which takes the FIRST hit, and bind_rows() puts the real rows first,
+  # so the real value would still win - but the shift should be removed at that
+  # point rather than relied on. The check below warns if that day arrives.
   # NB: normalise_iso2() maps Eurostat's 'EL' to ISO-2 'GR' - without it Greece
   # silently matches zero rows here (see auxiliary.R).
   births_ref = read.csv(o$births_url, fileEncoding = "UTF-8-BOM") %>%
@@ -116,6 +128,11 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA) {
     select(country, date, births) %>%
     filter(!is.na(date)) %>%
     setDT()
+  if (uniqueN(births_ref$date) > 12)
+    warning("births_by_month.csv now spans ", uniqueN(births_ref$date),
+            " months (> 12): the year-ahead duplication in options.R is no ",
+            "longer needed and should be removed.")
+
   o$births = bind_rows(births_ref,
                        births_ref %>% mutate(date = date %m+% years(1))) %>%
     arrange(country, date) %>%
