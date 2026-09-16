@@ -65,6 +65,39 @@ normalise_country_name = function(df, col = "country") {
 }
 
 # -------------------------------------------------------- -
+# Several type-7 quantiles from a SINGLE sort ----
+# -------------------------------------------------------- -
+# Numerically identical to stats::quantile(x, probs, type = 7) - the R default -
+# but returns all `probs` from one sort and without building a names attribute.
+#
+# PERFORMANCE. This is called once per group in the scenario summaries, where
+# the groups number in the hundreds of thousands and each holds only
+# n_best_samples values (5-100). stats::quantile() re-sorts and re-builds names
+# on every call, so at ~300k calls it accounted for 94% of process_results'
+# runtime (30.8s of 33s); this does the same arithmetic in ~5s.
+#
+# Returns an UNNAMED numeric vector the same length as `probs`.
+fast_quantile = function(x, probs, na.rm = TRUE) {
+
+  if (na.rm) x = x[!is.na(x)]
+
+  n = length(x)
+  if (n == 0L) return(rep(NA_real_, length(probs)))
+  if (n == 1L) return(rep(as.numeric(x), length(probs)))
+
+  s = sort.int(x, method = "quick")
+
+  # Type 7: h = (n-1)p, interpolating linearly between the bracketing order
+  # statistics. pmin() keeps the upper index in range at probs = 1, where the
+  # interpolation weight is zero anyway.
+  h  = (n - 1) * probs
+  lo = floor(h)
+  hi = pmin(lo + 1, n - 1)
+
+  s[lo + 1] + (h - lo) * (s[hi + 1] - s[lo + 1])
+}
+
+# -------------------------------------------------------- -
 # Canonical fine -> reporting age-group lookup ----
 # Single source of truth: age_group_map in default.yaml, so the
 # fine-to-reporting mapping is never hard-coded per script.

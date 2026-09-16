@@ -45,38 +45,43 @@ process_results = function(o, result, raw_output) {
     filter(!is.na(age_group)) %>%
     mutate(data_group = unname(band_map[as.character(age_group)]))
   
-  group_output = raw_output %>% left_join(age_group_map, by = "age_group") %>%
-    group_by(scenario, param_id, metric, time, data_group) %>%
-    summarise(value = sum(value, na.rm = TRUE)) %>%
-    rename(age_group = data_group) %>%
-    
-    filter(!metric == "seasonality") %>%
-    group_by(scenario, param_id, time, age_group) %>%
-    select(scenario, param_id, metric, time, age_group, value) %>%
-    ungroup() 
+  # PERFORMANCE - this is the "Quantifying parametric uncertainty" step.
+  #
+  # `group_output` and `pop_output` used to run the SAME left_join + group_by +
+  # summarise over the full raw table, and `pop_output` then aggregated its copy
+  # over age. The expensive part therefore ran twice. Compute it once and derive
+  # the total from it.
+  #
+  # data.table throughout: these group over a very large number of very small
+  # groups (one per scenario x sample x metric x band x day, each holding only
+  # n_best_samples values), which is exactly where dplyr's per-group overhead
+  # dominates the actual arithmetic.
+  #
+  # `seasonality` is dropped BEFORE aggregating rather than after. Equivalent,
+  # since metric is one of the grouping keys, but it is dropped for free here.
+  raw_dt = as.data.table(raw_output)
+  raw_dt = raw_dt[metric != "seasonality"]
+  raw_dt = merge(raw_dt, as.data.table(age_group_map), by = "age_group", all.x = TRUE)
+
+  banded = raw_dt[, .(value = sum(value, na.rm = TRUE)),
+                  by = .(scenario, param_id, metric, time, age_group = data_group)]
+
+  group_output = banded[, .(scenario, param_id, metric, time, age_group, value)]
+
+  pop_output = banded[, .(value = sum(value), age_group = "total"),
+                      by = .(scenario, param_id, metric, time)
+                      ][, .(scenario, param_id, metric, time, age_group, value)]
+
+  output_df = rbindlist(list(group_output, pop_output), use.names = TRUE)
   
-  pop_output = raw_output %>% left_join(age_group_map, by = "age_group") %>%
-    group_by(scenario, param_id, metric, time, data_group) %>%
-    summarise(value = sum(value, na.rm = TRUE)) %>%
-    rename(age_group = data_group) %>%
-    
-    filter(!metric == "seasonality") %>%
-    group_by(scenario, param_id, time, metric) %>%
-    summarise(value = sum(value)) %>%
-    mutate(age_group = "total") %>%
-    select(scenario, param_id, metric, time, age_group, value) %>%
-    ungroup() 
-  
-  output_df = bind_rows(group_output, pop_output)
-  
-  # Create key summary statistics across parameter uncertainty
-  result$output =  output_df  %>% 
-    group_by(scenario, metric, age_group, time) %>%
-    summarise(mean   = mean(value),
-              median = quantile(value, 0.5, na.rm = TRUE),
-              lower  = quantile(value, o$quantiles[1], na.rm = TRUE),
-              upper  = quantile(value, o$quantiles[2], na.rm = TRUE),
-              .groups = "drop") 
+  # Create key summary statistics across parameter uncertainty.
+  # All three quantiles come from one sort - see fast_quantile() in auxiliary.R
+  # for why stats::quantile() is not used here.
+  probs = c(0.5, o$quantiles[1], o$quantiles[2])
+  result$output = output_df[
+    , { q = fast_quantile(value, probs)
+        .(mean = mean(value), median = q[1], lower = q[2], upper = q[3]) },
+    by = .(scenario, metric, age_group, time)]
   
   return(result)
 }

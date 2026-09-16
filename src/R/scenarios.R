@@ -131,11 +131,16 @@ run_scenarios = function(o) {
       filter(scenario == scenario_name) %>%
       pull(sim_id)
     
-    # Iterate over simulations and rbind model output
-    output_matrix = foreach(sim_id = sim_ids,
-                            .combine = rbind) %do%{
-                              sim_result = try_load(o$pth$simulations, sim_id)
-                            }
+    # Iterate over simulations and bind model output.
+    #
+    # PERFORMANCE - this was foreach(..., .combine = rbind) %do%, which combines
+    # PAIRWISE: every iteration copies the whole accumulated table again, so the
+    # total copying is O(n^2) in the number of simulations. Invisible at
+    # n_best_samples = 5, but the submission needs 100-300 trajectories, where it
+    # is ~340x more copying than at 5. rbindlist allocates once.
+    output_matrix = rbindlist(lapply(sim_ids, function(sim_id)
+                                try_load(o$pth$simulations, sim_id)),
+                              use.names = TRUE, fill = TRUE)
     
     
     # Throw an error if no results found

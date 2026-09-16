@@ -778,7 +778,16 @@ apply_fit = function(y, fit_list) {
 # Aggregate model output for different time freq: daily, weekly, monthly, total ----
 # --------------------------------------------------------------------------------- -
 
-aggregate_model_output <- function(data_model, data_reported, date_col = "date") {
+# `freqs` selects which aggregations to build. The default is every frequency,
+# so calibration - which matches against whatever data_freq the target data
+# happens to use - is unchanged. Callers that plot a single frequency should ask
+# for just that one: building all five and discarding four was a large part of
+# why plotting was slow (see the note in plot_scenarios).
+aggregate_model_output <- function(data_model, data_reported, date_col = "date",
+                                   freqs = c("daily", "weekly", "4-weekly",
+                                             "monthly", "total")) {
+  freqs <- match.arg(freqs, several.ok = TRUE)
+
   # store name of the date column
   date_name <- date_col
   
@@ -787,11 +796,11 @@ aggregate_model_output <- function(data_model, data_reported, date_col = "date")
   group_cols <- setdiff(names(data_model), c(date_name, "value"))
   
   # DAILY
-  daily <- data_model %>%
+  daily <- if (!"daily" %in% freqs) NULL else data_model %>%
     mutate(data_freq = "daily")
   
   # WEEKLY
-  weekly <- data_model %>%
+  weekly <- if (!"weekly" %in% freqs) NULL else data_model %>%
     mutate(period = ceiling_date(data_model[[date_name]], "week", , change_on_boundary = FALSE)) %>%
     group_by(across(all_of(group_cols)), period) %>%
     summarise(value = sum(value), .groups = "drop") %>%
@@ -800,7 +809,10 @@ aggregate_model_output <- function(data_model, data_reported, date_col = "date")
   
   # 4-WEEKLY
   # Get starting date from data
-  if (length(data_reported) == 1 && is.na(data_reported)){
+  if (!"4-weekly" %in% freqs) {
+    four_week = NULL
+
+  } else if (length(data_reported) == 1 && is.na(data_reported)){
     four_week = NULL
     
   } else{
@@ -836,20 +848,23 @@ aggregate_model_output <- function(data_model, data_reported, date_col = "date")
   }
   
   # MONTHLY
-  monthly <- data_model %>%
+  monthly <- if (!"monthly" %in% freqs) NULL else data_model %>%
     mutate(period = floor_date(data_model[[date_name]], "month")) %>%
     group_by(across(all_of(group_cols)), period) %>%
     summarise(value = sum(value), .groups = "drop") %>%
     rename(!!date_name := period) %>%
     mutate(data_freq = "monthly")
   
-  # TOTAL (overall)
-  total <- data_model %>%
+  # TOTAL (overall). The column order used to be taken from `daily`, which is no
+  # longer guaranteed to exist; it is exactly the input's columns plus data_freq,
+  # so state that directly rather than depending on another frequency.
+  ref_names <- c(names(data_model), "data_freq")
+  total <- if (!"total" %in% freqs) NULL else data_model %>%
     group_by(across(all_of(group_cols))) %>%
     summarise(value = sum(value), .groups = "drop") %>%
     mutate(!!date_name := as.Date(NA),
            data_freq = "total") %>%
-    select(all_of(names(daily)))
+    select(all_of(ref_names))
   
   
   return( bind_rows(daily, weekly, four_week, monthly, total) )

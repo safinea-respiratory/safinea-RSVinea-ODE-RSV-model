@@ -83,6 +83,11 @@ plot_scenarios = function(o, fig_name, ...) {
   f$scenario_names = parse_yaml(o, "*read*") %>% unname()
   
   # ---- Extract model predictions ----
+  # Metrics and age bands actually plotted. Declared HERE, before the load loop,
+  # so each raw file can be filtered on the way in - see the note below.
+  age_levels    = age_group_levels(o)  # ordered fine age groups from default.yaml
+  metric_levels = c("hospital_admissions")
+
   # Initiate plotting dataframe
   plot_list = list()
   
@@ -91,6 +96,18 @@ plot_scenarios = function(o, fig_name, ...) {
     
     #result = try_load(o$pth$scenarios, paste0(scenario, '_100k'))
     result = try_load(o$pth$scenarios, paste0(scenario, '_raw'))
+    
+    # PERFORMANCE - filter to the plotted metric IMMEDIATELY, before anything
+    # downstream touches the data. The raw files carry every metric in
+    # metrics_to_save (11 of them at the time of writing) while the figures use
+    # exactly one, so this drops ~90% of the rows from every subsequent join,
+    # aggregation and summarise. This filter used to happen AFTER the ribbon,
+    # i.e. after all that work had already been done and thrown away (1.1% of
+    # the ribbon output was kept).
+    result = as.data.table(result)[metric %in% metric_levels]
+    if (!nrow(result))
+      stop("No '", paste(metric_levels, collapse = "/"), "' output for scenario '",
+           scenario, "' - is it listed in metrics_to_save?")
     
     # Format model output and store in list to be concatenated
     plot_list[[scenario]] = format_results(o, result)  
@@ -107,10 +124,7 @@ plot_scenarios = function(o, fig_name, ...) {
   dates_df  = data.table(date = all_dates, 
                          time  = 1 : length(all_dates))
   
-  # Define correct order of age_group and metric
-  age_levels = age_group_levels(o)  # ordered fine age groups from default.yaml
-  metric_levels = c("hospital_admissions")
-  
+  # NB age_levels / metric_levels are defined above the load loop.
   
   # Add dates
   plot_df = plot_df %>% inner_join(dates_df, by = "time") %>%
@@ -118,27 +132,32 @@ plot_scenarios = function(o, fig_name, ...) {
            scenario = factor(scenario, levels = f$scenarios)) %>% # Sort scenarios in legend
     select(-time)
   
-  # Compute daily, monthly, and total metric
-  plot_df = aggregate_model_output(plot_df, NA, date_col = "date")
+  # PERFORMANCE - request ONLY the frequency that is plotted. Every figure
+  # produced here filters to data_freq == "weekly", but this used to build
+  # daily, weekly, 4-weekly, monthly AND total and discard four of the five.
+  # NB if you re-enable g5 (plot5_df, which does not filter on data_freq) or
+  # add a figure at another frequency, widen this vector to match.
+  plot_df = aggregate_model_output(plot_df, NA, date_col = "date",
+                                   freqs = "weekly")
   
+  # PERFORMANCE - data.table for the two summaries below. Both group over a very
+  # large number of very small groups (one per age x metric x scenario x date,
+  # each holding only n_best_samples values), which is the case where dplyr's
+  # per-group overhead dominates completely and data.table does not.
+  plot_dt = as.data.table(plot_df)
+
   # Compute "total" age group
-  plot_df_total = plot_df %>% 
-    group_by(metric, variant, param_id, scenario, date, data_freq) %>%
-    summarise(value = sum(value),
-              age_group = "total") %>%
-    ungroup()
+  plot_df_total = plot_dt[, .(value = sum(value), age_group = "total"),
+                          by = .(metric, variant, param_id, scenario, date, data_freq)]
   
   # Merge "total" age group with others
-  plot_df = bind_rows(plot_df, plot_df_total)
+  plot_dt = rbindlist(list(plot_dt, plot_df_total), use.names = TRUE, fill = TRUE)
   
-  # Compute ribbon
-  plot_df = plot_df %>% 
-    group_by(age_group, metric, variant, scenario, date, data_freq) %>%
-    summarise(mean   = mean(value),
-              #median = quantile(value, 0.5, na.rm = TRUE),
-              lower  = quantile(value, o$quantiles[1], na.rm = TRUE),
-              upper  = quantile(value, o$quantiles[2], na.rm = TRUE),
-              .groups = "drop")
+  # Compute ribbon. Both quantiles come from one sort - see fast_quantile() in
+  # auxiliary.R for why stats::quantile() is not used here.
+  plot_df = plot_dt[, { q = fast_quantile(value, o$quantiles)
+                        .(mean = mean(value), lower = q[1], upper = q[2]) },
+                    by = .(age_group, metric, variant, scenario, date, data_freq)]
   
   age_group_df = plot_df %>% filter(age_group %in% age_levels) %>%
     filter(metric %in% metric_levels,
