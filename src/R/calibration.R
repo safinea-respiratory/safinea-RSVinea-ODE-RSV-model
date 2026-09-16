@@ -652,7 +652,11 @@ format_weights = function(data, model_input) {
 # MASS piles up against one end - not because one sample did.
 posterior_summary = function(o, cc, r_idx = NULL) {
 
-  pth = paste0("output/1_calibration/", cc, "/")
+  # Resolve via o$pth$output so this follows the branch-namespaced output root
+  # (see set_dirs() in directories.R). Hardcoding "output/1_calibration/..."
+  # made this diagnostic silently return NULL - try_load() is called with
+  # throw_error = FALSE, so a wrong path looks exactly like "no fit yet".
+  pth = paste0(file.path(o$pth$output, "1_calibration", cc), .Platform$file.sep)
   fit = try_load(pth, "fit_result", throw_error = FALSE)
   if (is.null(fit)) return(NULL)
 
