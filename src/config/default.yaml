@@ -79,9 +79,19 @@ age_group_map:
 
 # ---- Simulation settings ----
 
-# Number of days to simulate
-# This must be at least the sum of the burn-in period and the fitting dates
-n_days: 730
+# Number of days to simulate.
+# This must be at least the sum of the burn-in period and the fitting dates.
+#
+# Sized to the RespiCompass round-1 reporting period plus a small buffer. The
+# mandatory target is weekly hospitalisations from 2026-09-01 to 2028-05-28,
+# which is day 636; 640 ends 2028-06-01, giving four days of slack.
+#
+# NB this is SHORTER than the 2027/28 season (which ends 2028-07-31, day 700).
+# The seasonal totals in the figures therefore cover Aug-Jun for season 2 rather
+# than Aug-Jul. June/July RSV burden is ~0 so the numbers barely move, but if
+# the companion static model simulates further, the two models' season-2 windows
+# differ - see the analysis-window note in evaluate.R.
+n_days: 640
 
 # ---- Observation-model over-dispersion ----
 # Dispersion of the negative-binomial likelihood used to compare model output
