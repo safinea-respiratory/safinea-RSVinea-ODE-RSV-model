@@ -471,59 +471,59 @@ scenarios:
 ######################################
 #############  50% coverage ##########
 ######################################
-# - id: A.1-50
-#   name: "60+ age group, 50% uptake"
-#   adult_vacc_coverage: 0.50
-#   adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.2-50
-#   name: "65+ age group, 50% uptake"
-#   adult_vacc_coverage: 0.50
-#   adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.3-50
-#   name: "70+ age group, 50% uptake"
-#   adult_vacc_coverage: 0.50
-#   adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.4-50
-#   name: "75+ age group, 50% uptake"
-#   adult_vacc_coverage: 0.50
-#   adult_vaccination_agegroups: ["75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.5-50
-#   name: "80+ age group, 50% uptake"
-#   adult_vacc_coverage: 0.50
-#   adult_vaccination_agegroups: ["80+y"]
-#   infant_vacc_coverage: 0.0
+- id: A.1-50
+  name: "60+ age group, 50% uptake"
+  adult_vacc_coverage: 0.50
+  adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.2-50
+  name: "65+ age group, 50% uptake"
+  adult_vacc_coverage: 0.50
+  adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.3-50
+  name: "70+ age group, 50% uptake"
+  adult_vacc_coverage: 0.50
+  adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.4-50
+  name: "75+ age group, 50% uptake"
+  adult_vacc_coverage: 0.50
+  adult_vaccination_agegroups: ["75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.5-50
+  name: "80+ age group, 50% uptake"
+  adult_vacc_coverage: 0.50
+  adult_vaccination_agegroups: ["80+y"]
+  infant_vacc_coverage: 0.0
 ######################################
 #############  75% coverage ##########
 ######################################
-# - id: A.1-75
-#   name: "60+ age group, 75% uptake"
-#   adult_vacc_coverage: 0.75
-#   adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.2-75
-#   name: "65+ age group, 75% uptake"
-#   adult_vacc_coverage: 0.75
-#   adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.3-75
-#   name: "70+ age group, 75% uptake"
-#   adult_vacc_coverage: 0.75
-#   adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.4-75
-#   name: "75+ age group, 75% uptake"
-#   adult_vacc_coverage: 0.75
-#   adult_vaccination_agegroups: ["75-79y", "80+y"]
-#   infant_vacc_coverage: 0.0
-# - id: A.5-75
-#   name: "80+ age group, 75% uptake"
-#   adult_vacc_coverage: 0.75
-#   adult_vaccination_agegroups: ["80+y"]
-#   infant_vacc_coverage: 0.0
+- id: A.1-75
+  name: "60+ age group, 75% uptake"
+  adult_vacc_coverage: 0.75
+  adult_vaccination_agegroups: ["60-64y", "65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.2-75
+  name: "65+ age group, 75% uptake"
+  adult_vacc_coverage: 0.75
+  adult_vaccination_agegroups: ["65-69y", "70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.3-75
+  name: "70+ age group, 75% uptake"
+  adult_vacc_coverage: 0.75
+  adult_vaccination_agegroups: ["70-74y", "75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.4-75
+  name: "75+ age group, 75% uptake"
+  adult_vacc_coverage: 0.75
+  adult_vaccination_agegroups: ["75-79y", "80+y"]
+  infant_vacc_coverage: 0.0
+- id: A.5-75
+  name: "80+ age group, 75% uptake"
+  adult_vacc_coverage: 0.75
+  adult_vaccination_agegroups: ["80+y"]
+  infant_vacc_coverage: 0.0
 
 
   
