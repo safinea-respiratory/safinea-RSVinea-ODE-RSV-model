@@ -600,7 +600,7 @@ compute_background_mortality <- function(mortality_df, population_fine,
 #
 # Returns VE indexed by WANING STAGE 1..W. Stage j holds people vaccinated j-1
 # months ago (stage 1 = just vaccinated), so stage j reads the file's month j-1.
-get_waning_curve = function(o, W, rep = NULL) {
+get_waning_curve = function(o, max_months, rep = NULL) {
 
   w = o$waning
   if (is.null(w) || !nrow(w))
@@ -619,14 +619,17 @@ get_waning_curve = function(o, W, rep = NULL) {
   }
   cur = cur[order(cur$month), ]
 
-  # The chain has W stages, so we need months 0..W-1. Fail loudly rather than
-  # silently recycling a short curve across the sweep() in rsv_model().
-  need = seq_len(W) - 1L
+  # We index this by VACCINE AGE IN MONTHS, so we need months 0..max_months-1.
+  # max_months is the waning horizon (how long a dose is modelled to last), NOT
+  # the number of compartments - those are one per campaign cohort. Fail loudly
+  # rather than silently recycling a short curve in rsv_model().
+  need = seq_len(max_months) - 1L
   idx  = match(need, cur$month)
   if (anyNA(idx))
     stop("get_waning_curve(): waning curves cover months ", min(cur$month), "-",
-         max(cur$month), " but W = ", W, " stages requires months 0-", W - 1,
-         ". Either lower W or supply a longer curve.")
+         max(cur$month), " but a waning horizon of ", max_months, " months ",
+         "requires months 0-", max_months - 1,
+         ". Either lower waning_months or supply a longer curve.")
 
   VE_inf = cur$VE_inf[idx]
   VE_sev = cur$VE_sev[idx]
@@ -640,8 +643,9 @@ get_waning_curve = function(o, W, rep = NULL) {
   VE_sev_cond = ifelse(VE_inf >= 1, 0, 1 - (1 - VE_sev) / (1 - VE_inf))
   VE_sev_cond = pmax(VE_sev_cond, 0)
 
-  return(list(VE_inf      = VE_inf,       # length W, by stage
-              VE_sev      = VE_sev,       # length W, by stage
-              VE_sev_cond = VE_sev_cond)) # length W, by stage
+  # Indexed by vaccine age: element m+1 is month m since vaccination.
+  return(list(VE_inf      = VE_inf,       # length max_months, by vaccine age
+              VE_sev      = VE_sev,       # length max_months, by vaccine age
+              VE_sev_cond = VE_sev_cond)) # length max_months, by vaccine age
 }
 

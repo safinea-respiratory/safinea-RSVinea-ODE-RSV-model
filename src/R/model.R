@@ -181,17 +181,38 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
     stop("background_mortality_rate has ", n_mort, " values but there are ",
          p$n_age, " age groups; it must have exactly one rate per age group.")
 
+  # ---- Adult vaccine cohorts ----
+  # There is ONE adult V compartment per tier per CAMPAIGN, not per month of
+  # waning. Everyone vaccinated in a given campaign was vaccinated on the same
+  # day, so their vaccine age is a property of the clock, not of which
+  # compartment they sit in - it does not need to be tracked by moving people
+  # along a chain.
+  #
+  # This used to be a W = 24 stage chain advanced monthly. With a single
+  # campaign that meant 23 of every 24 stages held exactly zero people for the
+  # whole run while still being integrated on every step: 3 tiers x 23 stages x
+  # 35 age groups = 2,415 of 3,710 ODE states, permanently zero. Collapsing it
+  # cut the solve time ~2.5x.
+  #
+  # p$W is kept as the name for the number of V compartments per tier - every
+  # seq_len(p$W) below is unchanged - but it now counts CAMPAIGNS.
+  p$camp_dates   <- sort(ymd(unlist(p$adult_vaccination_dates)))
+  p$n_campaigns  <- length(p$camp_dates)
+  p$W            <- max(1L, p$n_campaigns)
+
   # ---- Adult vaccine waning curve (RespiCompass data) ----
   # VE against infection and against severe disease by months since vaccination,
   # taken directly from the RespiCompass waning curves rather than from the yaml.
-  # get_waning_curve() returns vectors of length W indexed by waning stage and
-  # validates that the file covers months 0..W-1, so a short curve fails loudly
-  # instead of silently recycling through the sweep() in rsv_model().
+  # get_waning_curve() returns vectors indexed by VACCINE AGE (element m+1 is
+  # month m after vaccination) and validates that the file covers the whole
+  # waning horizon, so a short curve fails loudly rather than being silently
+  # recycled in rsv_model().
   #
   # o$waning_rep selects the replicate: set per simulation by run_scenarios()
   # (parameter set 1 -> rep 1, 2 -> rep 2, ...), and left NULL during calibration
   # so the median curve is used and the likelihood stays deterministic.
-  p$adult_ve <- get_waning_curve(o, W = p$W, rep = o$waning_rep)
+  p$waning_months <- as.integer(p$waning_months)
+  p$adult_ve <- get_waning_curve(o, max_months = p$waning_months, rep = o$waning_rep)
 
   # ---- Model set up ---
   if (verbose != "none") message(" - Running model")
@@ -225,9 +246,9 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # campaign) by age group. Like D*, it is not aged and not subject to mortality.
   p$compartments = c(
     "V0",
-    paste0("V1_", seq_len(p$W)),   # adult waning chain, tier 1
-    paste0("V2_", seq_len(p$W)),   # adult waning chain, tier 2
-    paste0("V3_", seq_len(p$W)),   # adult waning chain, tier 3
+    paste0("V1_", seq_len(p$W)),   # one compartment per campaign cohort, tier 1
+    paste0("V2_", seq_len(p$W)),   # one compartment per campaign cohort, tier 2
+    paste0("V3_", seq_len(p$W)),   # one compartment per campaign cohort, tier 3
     "S0", "S1", "S2", "S3",
     "E0", "E0v", "E1", "E1v", "E2", "E2v", "E3", "E3v",
     "I0", "I0v", "I1", "I1v", "I2", "I2v", "I3", "I3v",
@@ -305,6 +326,28 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   # Offsetting by +1 puts every event inside the times grid and on the same
   # clock as the rest of the pipeline.
   event_times <- as.numeric(event_dates - p$start_date) + 1
+
+  # ---- Vaccine age, per simulated day, per campaign cohort ----
+  # Row t, column c = the index into the waning curve for cohort c on day t,
+  # i.e. (months since campaign c) + 1.
+  #
+  # Precomputed because rsv_model() is evaluated several thousand times per
+  # solve and doing date arithmetic in there would cost more than the collapsed
+  # chain saves.
+  #
+  # Vaccine age counts FIRST-OF-MONTH BOUNDARIES CROSSED, which is the clock the
+  # old waning chain advanced on - the ageing event fires on the 1st, so someone
+  # vaccinated on 1 Nov reads month 0 for all of November and month 1 from
+  # 1 December. Calendar month differences reproduce that exactly. Using
+  # elapsed_days/30.44 would NOT, and would drift a month out partway through.
+  sim_dates  <- p$start_date + seq_len(n_days_eff) - 1
+  p$ve_index <- vapply(p$camp_dates, function(cd) {
+    m <- (year(sim_dates) - year(cd)) * 12L + (month(sim_dates) - month(cd))
+    # Before the campaign the cohort is empty, so the value is never used; clamp
+    # to a valid index so it can never introduce an NA into the flow matrices.
+    pmin(pmax(m + 1L, 1L), p$waning_months)
+  }, integer(length(sim_dates)))
+  dim(p$ve_index) <- c(length(sim_dates), p$n_campaigns)
 
   # ---- Sanity check: season_effect coverage ----
   # The ODE applies a per-season scalar on beta, indexed by the season number
@@ -452,30 +495,34 @@ rsv_model = function(t, y, p){
     # 1 = no protection, 0 = full protection.
     infant_vaccine_immunity <- 1 - p$infant_vacc_IE * unlist(p$infant_vaccine_rel_protection)
 
-    # Adult: residual susceptibility indexed by waning stage j = 1..W, taken
-    # straight from the RespiCompass waning curve (p$adult_ve$VE_inf[j] is the
-    # VE against infection j-1 months after vaccination). No scalar amplitude is
-    # applied - the file supplies ABSOLUTE VE, so adult_vacc_IE is not used here.
-    adult_vacc_immunity <- 1 - p$adult_ve$VE_inf
+    # Adult: residual susceptibility per campaign cohort. Cohort c's vaccine age
+    # on this day is p$ve_index[t, c], an index into the waning curve, so the
+    # protection follows the clock rather than the compartment. No scalar
+    # amplitude is applied - the file supplies ABSOLUTE VE, so adult_vacc_IE is
+    # not used here.
+    .day <- min(max(as.integer(floor(t)), 1L), nrow(p$ve_index))
+    adult_vacc_immunity <- 1 - p$adult_ve$VE_inf[p$ve_index[.day, ]]
 
     # VE against severity — convert overall (trial-reported) to conditional on infection.
     # VE_sev_cond = 1 - (1 - VE_hosp_overall) / (1 - VE_acq)
     infant_vacc_IE_hosp_cond <- 1 - (1 - p$infant_vacc_IE_hosp) / (1 - p$infant_vacc_IE)
 
-    # Adult conditional VE against severity. The waning curve gives this per
-    # stage, but it CANNOT be applied per stage: the vaccinated infection
-    # streams (E1v/I1v etc.) are single pooled compartments, not stage-resolved,
-    # so the waning stage is lost at the moment of infection. Resolving it would
-    # need 6 x W x n_age extra states (~5,000 at W = 24).
-    # Averaging over stages loses very little here: conditional on not being
-    # infected, this vaccine adds only ~0.04 protection against severity at
-    # month 0, decaying to ~0.01 by month 24. See get_waning_curve().
+    # Adult conditional VE against severity. The waning curve gives this by
+    # vaccine age, but it CANNOT be applied that way: the vaccinated infection
+    # streams (E1v/I1v etc.) are single pooled compartments, so vaccine age is
+    # lost at the moment of infection. Resolving it would need 6 x n_age extra
+    # states per month of waning.
+    # Averaging over the waning horizon loses very little here: conditional on
+    # not being infected, this vaccine adds only ~0.04 protection against
+    # severity at month 0, decaying to ~0.01 by month 24. NB this is a mean over
+    # months 0..waning_months-1 and is deliberately unchanged by the move to
+    # cohorts. See get_waning_curve().
     adult_vacc_IE_hosp_cond  <- mean(p$adult_ve$VE_sev_cond)
 
     # ---- Adult V-stage infection flows ----
-    # For each tier k and waning stage j, infection flow from V_k_j[a] to E_kv[a]:
-    #   flow[a,j] = susceptibility * prior_prot_k * adult_vacc_immunity[j] * lambda_A[a] * V_k_mat[a,j]
-    # Computed as n_age × W matrices: sweep scales column j by adult_vacc_immunity[j],
+    # For each tier k and cohort c, infection flow from V_k_c[a] to E_kv[a]:
+    #   flow[a,c] = susceptibility * prior_prot_k * adult_vacc_immunity[c] * lambda_A[a] * V_k_mat[a,c]
+    # Computed as n_age x W matrices: sweep scales column c by adult_vacc_immunity[c],
     # then row-multiplication by the age-specific infection rate handles lambda_A.
     V1_infection_flow <- (p$susceptibility * p$prior_infection_protection  * lambda_A) *
                            sweep(V1_mat, 2, adult_vacc_immunity, "*")
@@ -672,11 +719,10 @@ rsv_model = function(t, y, p){
 #    n-month-wide bin empties on a roughly n-month timescale. The oldest
 #    bin (e.g. "80+y") has infinite width and never empties.
 #
-# 2. ADULT V-STAGE WANING: the adult vaccination waning chain is advanced
-#    one step. Individuals in V_k_j move to V_k_{j+1} (j = 1..W-1);
-#    those in V_k_W (fully waned) return to S_k and become eligible for
-#    re-vaccination. This is done after demographic ageing so age-group
-#    movement and stage advancement are independent.
+# 2. ADULT VACCINE COHORTS: V_k_c holds the people vaccinated in campaign c
+#    and nobody moves between compartments - vaccine age comes from the clock.
+#    A cohort whose vaccine age reaches `waning_months` returns to S_k and
+#    becomes eligible for re-vaccination.
 #
 # 3. VACCINATION:
 #    a. Infant routine: newborns (0-1m) are split between S0 and V0
@@ -774,24 +820,32 @@ ageing_event <- function(t, y, parms) {
   idx_nd_birth <- which(prefixes == "n_doses" & age_labels == "0-1m")
   new_y[idx_nd_birth] <- new_y[idx_nd_birth] + births_val * infant_vacc_coverage
 
-  # ---- 2. Adult V-stage waning advancement ----
-  # Advance each tier's waning chain by one month. 
-  # Note: this is NOT an aging event but accountaing of "vaccine age" (time since vaccination)
-  # Process stages from last to first to avoid overwriting values mid-loop.
-  for (k in 1:3) {
-    idx_Sk <- which(prefixes == paste0("S", k))
+  # ---- 2. Adult vaccine cohorts: retirement ----
+  # Cohorts do NOT move between compartments. V_k_c holds the people vaccinated
+  # in campaign c for the whole run, and their protection is read from the clock
+  # (p$ve_index, built in model()). The only thing that happens here is
+  # retirement: once a cohort's vaccine age reaches the waning horizon its
+  # protection is spent and it returns to the susceptible pool, where it becomes
+  # eligible for a later campaign again.
+  #
+  # This replaces a monthly V_k_j -> V_k_{j+1} shuffle along a 24-stage chain.
+  # The retirement date is identical to what that chain produced: it dumped the
+  # last stage into S on the event AFTER a cohort had spent `waning_months`
+  # months in the chain, which is the same condition tested here.
+  for (cc in seq_len(parms$n_campaigns)) {
 
-    for (j in parms$W:1) {
-      idx_j <- which(prefixes == paste0("V", k, "_", j))
-      if (j == parms$W) {
-        # Last stage: waned individuals return to susceptible pool
-        new_y[idx_Sk] <- new_y[idx_Sk] + new_y[idx_j]
-      } else {
-        # All other stages: advance to next stage
-        idx_j1        <- which(prefixes == paste0("V", k, "_", j + 1))
-        new_y[idx_j1] <- new_y[idx_j1] + new_y[idx_j]
-      }
-      new_y[idx_j] <- 0
+    cd <- parms$camp_dates[cc]
+    if (current_date < cd) next
+
+    vaccine_age_months <- (year(current_date) - year(cd)) * 12L +
+                          (month(current_date) - month(cd))
+    if (vaccine_age_months < parms$waning_months) next
+
+    for (k in 1:3) {
+      idx_Sk <- which(prefixes == paste0("S", k))
+      idx_c  <- which(prefixes == paste0("V", k, "_", cc))
+      new_y[idx_Sk] <- new_y[idx_Sk] + new_y[idx_c]
+      new_y[idx_c]  <- 0
     }
   }
 
@@ -884,13 +938,17 @@ ageing_event <- function(t, y, parms) {
                              age_labels %in% elig)
     pop_elig <- tapply(new_y[idx_living_elig], age_labels[idx_living_elig], sum)
 
+    # Which campaign is this? Each one has its own cohort compartment, so that
+    # its vaccine age can be read from the clock independently of the others.
+    cc <- which(parms$camp_dates == current_date)[1]
+
     # Protection: susceptibles only.
     for (k in 1:3) {
       idx_Sk  <- which(prefixes == paste0("S", k) & age_labels %in% elig)
-      idx_Vk1 <- which(prefixes == paste0("V", k, "_1") & age_labels %in% elig)
+      idx_Vkc <- which(prefixes == paste0("V", k, "_", cc) & age_labels %in% elig)
       to_vacc        <- new_y[idx_Sk] * parms$adult_vacc_coverage
       new_y[idx_Sk]  <- new_y[idx_Sk]  - to_vacc
-      new_y[idx_Vk1] <- new_y[idx_Vk1] + to_vacc
+      new_y[idx_Vkc] <- new_y[idx_Vkc] + to_vacc
     }
 
     # Doses: whole eligible population (see the note above).
