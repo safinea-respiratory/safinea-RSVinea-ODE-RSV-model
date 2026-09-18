@@ -221,7 +221,7 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA,
   # RUNTIME: this is a 10x increase on the previous value of 10 and the scenario
   # sweep scales linearly with it. Drop it back to ~10 for quick local testing,
   # but never for a submission run.
-  o$n_best_samples = 5
+  o$n_best_samples = 100
   
   # Number of uncertainty parameter sets to sample 
   o$n_parameter_sets = 1 # Best to set to 1 if not simulating parameter uncertainty

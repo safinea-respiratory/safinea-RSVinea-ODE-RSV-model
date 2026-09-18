@@ -35,10 +35,10 @@ for (country in c("AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "F
   run_scenarios(o)   # See R/scenarios.R
   print(Sys.time())
   
-  # Step 3) Plot results ----
+  # # Step 3) Plot results ----
   run_results(o)     # See R/results.R
   print(Sys.time())
-  
+
 }
 # Finish up
 message("* Finished!")
