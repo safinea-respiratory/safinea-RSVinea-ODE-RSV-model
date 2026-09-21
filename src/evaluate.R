@@ -64,14 +64,20 @@
 # Notes
 # ---------------------------------------------------------------------------
 # * Output is namespaced by git branch - see set_dirs() in R/directories.R.
-# * Each <scenario>_raw.rds is read EXACTLY ONCE and reduced immediately to
-#   (a) daily admissions by reporting band and (b) final dose counts. Those
-#   files are ~128 MB each and the old scripts re-read them per figure basis.
-#   Dropping immYes/immNo also means incidence_prop_vacc / hosp_prop_vacc are
-#   no longer needed at all.
-# * Peak memory is dominated by the accumulated submission frame
-#   (weeks x bands x samples x scenarios x countries). Expect ~1 GB at 100
-#   samples and 28 countries; see SHARD_SUBMISSION if that is too much.
+# * Each scenario is reduced ONCE and the result cached under
+#   2_scenarios/<ISO>/reduced/. See reduce_scenario() for why it reads the
+#   per-simulation files rather than the combined <scenario>_raw.rds, and for
+#   the measurements behind that choice. The cache is ~240 MB for 26 countries
+#   against 74 GB of raw output, so a second run loads in seconds.
+#   CAVEAT: the cache is NOT invalidated when the raw output changes. Re-run
+#   the model for a country and you must delete its reduced/ directory, or
+#   evaluate.R will quietly reuse the previous results.
+# * Countries are loaded in parallel (N_LOAD_WORKERS). Memory is not the
+#   constraint any more - peak is a few hundred MB per worker - but note the
+#   load is chunked over countries, so the tail is a few workers finishing
+#   their last country while the rest idle.
+# * Dropping immYes/immNo means incidence_prop_vacc / hosp_prop_vacc are not
+#   needed at all, which is most of why the reduction is so effective.
 # * Countries with no scenario output are skipped with a message, so this can
 #   be run mid-sweep.
 ########################################################## #
@@ -173,11 +179,21 @@ season_label <- function(d) {
   paste0(y, "/", y + 1)
 }
 
+# Scenarios available for a country, as a named vector of FALLBACK raw paths.
+# A scenario counts as present if it has raw output OR an existing reduced
+# cache, so the (large) raw files can be deleted once everything is cached.
 scen_files <- function(iso) {
   d <- file.path(SCEN_ROOT, iso, "scenarios")
-  if (!dir.exists(d)) return(character(0))
-  f <- list.files(d, pattern = "_raw[.]rds$")
-  setNames(file.path(d, f), sub("_raw[.]rds$", "", f))
+  raw <- if (dir.exists(d)) list.files(d, pattern = "_raw[.]rds$") else character(0)
+  out <- setNames(file.path(d, raw), sub("_raw[.]rds$", "", raw))
+
+  rd <- file.path(SCEN_ROOT, iso, "reduced")
+  if (dir.exists(rd)) {
+    cached <- sub("[.]rds$", "", list.files(rd, pattern = "[.]rds$"))
+    extra  <- setdiff(cached, names(out))
+    if (length(extra)) out <- c(out, setNames(rep(NA_character_, length(extra)), extra))
+  }
+  out[order(names(out))]
 }
 
 # Scenario id -> the two plot axes. Ids follow the round's convention
@@ -229,6 +245,98 @@ pop_all_countries <- function(o) {
     lapply(function(x) tapply(x$population, x$sub, sum))
 }
 
+# ---- Per-scenario reduction, with an on-disk cache ---------------------- ----
+# The expensive part of this script is turning one scenario's raw simulation
+# output into the two small frames the rest of it needs. That work is identical
+# every run, so it is cached next to the scenario output and done once.
+#
+# WHERE THE DATA IS READ FROM. run_scenarios() writes each simulation to
+# simulations/<sim_id>.rds and ALSO writes them concatenated and re-gzipped to
+# scenarios/<scenario>_raw.rds. Reading the per-simulation files is much
+# cheaper, because each is ~900 KB and can be filtered to the two metrics we
+# want on arrival, whereas the combined file forces R to materialise all
+# 1.38 GB before 82% of it can be discarded. Measured on one scenario:
+#
+#     combined _raw.rds   81.8 s   peak ~1,380 MB
+#     per-sim files       32.7 s   peak ~2 MB       (identical output)
+#
+# The memory difference is what matters most: at ~1.4 GB per worker, ten
+# workers overcommitted a 31.6 GB machine to 51 GB and spent their time
+# servicing page faults instead of decompressing. At 2 MB, memory stops being
+# the binding constraint and the cores can actually be used.
+#
+# The combined file remains the fallback, so output produced before the
+# simulations directory existed (or after it is cleaned up) still works.
+reduced_file <- function(iso, scen)
+  file.path(SCEN_ROOT, iso, "reduced", paste0(scen, ".rds"))
+
+# Simulation files belonging to one scenario. sim_id is
+# "s<param_set>_<fitting_set>_<scenario>", so match the suffix literally -
+# scenario ids contain "." and "-", which a regex would treat as wildcards.
+sim_files_for <- function(sim_dir, scen) {
+  if (!dir.exists(sim_dir)) return(character(0))
+  f <- list.files(sim_dir, pattern = "[.]rds$", full.names = TRUE)
+  f[endsWith(basename(f), paste0("_", scen, ".rds"))]
+}
+
+reduce_scenario <- function(iso, scen, sim_dir, raw_path, start, fine2sub) {
+
+  cf <- reduced_file(iso, scen)
+  if (file.exists(cf)) {
+    cached <- try(readRDS(cf), silent = TRUE)
+    if (!inherits(cached, "try-error")) return(cached)
+    unlink(cf)          # corrupt or half-written: rebuild it
+  }
+
+  keep <- function(x) {
+    x <- as.data.table(x)
+    x <- x[metric %in% c(METRIC, DOSES) & !is.na(age_group)]
+    if (!nrow(x)) return(NULL)
+    x[, sub_band := fine2sub[age_group]]
+    x[!is.na(sub_band), .(value = sum(value, na.rm = TRUE)),
+      by = .(param_id, time, metric, sub_band)]
+  }
+
+  sf <- sim_files_for(sim_dir, scen)
+  r <- if (length(sf)) {
+    rbindlist(lapply(sf, function(p) keep(readRDS(p))), fill = TRUE)
+  } else if (!is.na(raw_path) && file.exists(raw_path)) {
+    keep(readRDS(raw_path))
+  } else NULL
+
+  if (is.null(r) || !nrow(r)) return(NULL)
+
+  # sim = the trajectory. param_id is "<sim>_<scenario>"; strip by length rather
+  # than regex so a scenario id containing "." cannot over-match.
+  r[, sim := substr(param_id, 1L, nchar(param_id) - nchar(scen) - 1L)]
+
+  h <- r[metric == METRIC]
+  hosp <- seas <- NULL
+  if (nrow(h)) {
+    h[, date := start + time - 1L]
+    # Season is assigned on DAILY dates, before the weekly rollup, so a week
+    # straddling 1 August is still split correctly between seasons.
+    h[, season := season_label(date)]
+    seas <- h[, .(value = sum(value), days = uniqueN(date)),
+              by = .(sim, season, sub_band)][, `:=`(iso = iso, scen = scen)]
+    h[, week_end := floor_date(date, "week", week_start = 1) + 6L]
+    hosp <- h[, .(value = sum(value)), by = .(sim, week_end, sub_band)]
+    setnames(hosp, "week_end", "date")
+    hosp[, `:=`(iso = iso, scen = scen)]
+  }
+
+  # Doses are a CUMULATIVE counter: take the final value, never the sum.
+  d <- r[metric == DOSES]
+  dose <- if (nrow(d))
+    d[time == max(time), .(doses = sum(value, na.rm = TRUE)),
+      by = .(sim, sub_band)][, `:=`(iso = iso, scen = scen)] else NULL
+
+  out <- list(hosp = hosp, seas = seas, dose = dose)
+  dir.create(dirname(cf), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(out, cf)
+  out
+}
+
 # ---- 1. LOAD - this model ----------------------------------------------- ----
 # Reads each scenario file once and returns the two reduced tables everything
 # else is built from:
@@ -260,39 +368,18 @@ load_dynamic_country <- function(iso) {
   camp <- ymd(unlist(parse_yaml(o, BASELINE)$parsed$adult_vaccination_dates))
   camp <- min(camp, na.rm = TRUE)
 
-  hosp <- dose <- vector("list", length(files))
+  # One reduced result per scenario, built once and cached (see
+  # reduce_scenario). `files` supplies the fallback raw path per scenario.
+  red <- lapply(names(files), function(scen)
+    reduce_scenario(iso, scen, o$pth$simulations, files[[scen]], start, fine2sub))
+  names(red) <- names(files)
 
-  for (i in seq_along(files)) {
-    scen <- names(files)[i]
-    r <- as.data.table(readRDS(files[[i]]))
-    r <- r[metric %in% c(METRIC, DOSES) & !is.na(age_group)]
-    if (!nrow(r)) next
-
-    # sim = the trajectory, i.e. param_id with the trailing "_<scenario>"
-    # removed. param_id is "s<param_set>_<fitting_set>_<scenario>".
-    r[, sim      := sub(paste0("_", scen, "$"), "", param_id)]
-    r[, sub_band := fine2sub[age_group]]
-    r <- r[!is.na(sub_band)]
-
-    h <- r[metric == METRIC,
-           .(value = sum(value, na.rm = TRUE)), by = .(sim, time, sub_band)]
-    if (nrow(h)) {
-      h[, `:=`(iso = iso, scen = scen, date = start + time - 1L)]
-      h[, time := NULL]
-      hosp[[i]] <- h
-    }
-
-    # Doses are a CUMULATIVE counter: take the final value, never the sum.
-    d <- r[metric == DOSES]
-    if (nrow(d)) {
-      d <- d[time == max(time), .(doses = sum(value, na.rm = TRUE)), by = .(sim, sub_band)]
-      d[, `:=`(iso = iso, scen = scen)]
-      dose[[i]] <- d
-    }
-    rm(r); invisible(gc(FALSE))
-  }
+  hosp <- lapply(red, `[[`, "hosp")
+  seas <- lapply(red, `[[`, "seas")
+  dose <- lapply(red, `[[`, "dose")
 
   hosp <- rbindlist(hosp, fill = TRUE)
+  seas <- rbindlist(seas, fill = TRUE)
   dose <- rbindlist(dose, fill = TRUE)
   if (!nrow(hosp)) { message("  - ", iso, ": no admissions output, skipped"); return(NULL) }
 
@@ -307,8 +394,8 @@ load_dynamic_country <- function(iso) {
   message("  + ", iso, ": ", length(others), " scenarios, ",
           uniqueN(hosp$sim), " trajectories")
 
-  list(hosp = hosp, dose = dose, axes = ax, start = start, camp = camp,
-       scenarios = others)
+  list(hosp = hosp, seas = seas, dose = dose, axes = ax, start = start,
+       camp = camp, scenarios = others)
 }
 
 # ---- 2. LOAD - static model --------------------------------------------- ----
@@ -348,6 +435,15 @@ load_static <- function() {
                by = .(iso = location, scen = scenario_id, sim = output_type_id,
                       date = target_end_date, sub_band)]
 
+  # Seasonal frame, matching what load_dynamic_country() returns so both models
+  # go through impact_table() unchanged. The static file is weekly, so a week is
+  # attributed whole to the season of its end date and `days` is 7 per week -
+  # close enough for the partial-season test, which only asks whether a season
+  # is substantially covered.
+  hosp[, season := season_label(date)]
+  seas <- hosp[, .(value = sum(value), days = 7L * uniqueN(date)),
+               by = .(iso, scen, sim, season, sub_band)]
+
   # Doses: the file reports these BOTH per eligible age band AND as a national
   # 'undefined' total, and the bands sum exactly to that total - so summing every
   # administered_doses row double-counts. Take the total when it is present and
@@ -382,25 +478,27 @@ load_static <- function() {
   message("* Static model: ", uniqueN(hosp$iso), " countries, ",
           uniqueN(hosp$scen), " scenarios, ", uniqueN(hosp$sim), " trajectories")
 
-  list(hosp = hosp, dose = dose, camp = camp)
+  list(hosp = hosp, seas = seas, dose = dose, camp = camp)
 }
 
 # ---- 3. Scenario impact -------------------------------------------------- ----
 # Per (iso, scenario, season, sample): burden vs the SAME sample's baseline, on
 # two age bases. Pairing per sample means shared parameter uncertainty cancels
 # instead of inflating the interval.
+# `hosp` here is the SEASONAL frame - iso, scen, sim, season, sub_band, value,
+# days - produced by load_dynamic_country() and load_static(). Both models
+# arrive pre-seasonalised and carrying a day count, so the partial-season test
+# is a test on days for both and no longer needs a per-model unit conversion.
 impact_table <- function(hosp, dose, pop_by_iso, axes, model_label) {
 
   if (is.null(hosp) || !nrow(hosp)) return(NULL)
   hosp <- copy(hosp)
-  hosp[, season := season_label(date)]
 
-  # Seasons this run actually covers, per country.
-  # Our output is daily, the static file weekly, so the minimum-length test is
-  # expressed in the units each one actually carries.
-  min_pts <- if (model_label == STATIC_LABEL) MIN_SEASON_DAYS / 7 else MIN_SEASON_DAYS
-  span <- hosp[, .(days = uniqueN(date)), by = .(iso, season)]
-  drop <- span[days < min_pts, .(iso, season)]
+  # Seasons this run actually covers, per country. `days` is constant within a
+  # season (same calendar either way), so take the max rather than summing it
+  # across sims and bands.
+  span <- hosp[, .(days = max(days)), by = .(iso, season)]
+  drop <- span[days < MIN_SEASON_DAYS, .(iso, season)]
   if (nrow(drop))
     message("    (", model_label, ": dropping partial season(s) ",
             paste(unique(sprintf("%s %s", drop$iso, drop$season)), collapse = ", "), ")")
@@ -707,12 +805,55 @@ check_submission <- function(d, label) {
 isos <- sort(list.dirs(SCEN_ROOT, full.names = FALSE, recursive = FALSE))
 message("* Scanning ", length(isos), " countries in ", SCEN_ROOT)
 
-dyn <- lapply(isos, load_dynamic_country)
+# ---- Load countries in parallel --------------------------------------------
+# Countries are independent, and the work is dominated by readRDS of the
+# ~92 MB per-scenario raw files: at ~40 s each, 26 countries x 16 scenarios is
+# over four hours single-threaded.
+#
+# Workers are capped below the core count on purpose. Each one holds one raw
+# frame (~1.4 GB) at a time, so the ceiling here is memory, not CPU - and the
+# per-scenario reduction in load_dynamic_country() means only small weekly and
+# seasonal frames come back to the parent.
+#
+# Set N_LOAD_WORKERS <- 1 to fall back to a plain sequential load, which is
+# also what happens automatically if the cluster cannot be created.
+# Memory is no longer the binding constraint: reduce_scenario() reads ~900 KB
+# simulation files rather than materialising a 1.4 GB frame, so peak per worker
+# is a few hundred MB. Use the cores.
+N_LOAD_WORKERS <- max(1, min(11, o_paths$parallel))
+
+load_all <- function(isos) {
+  if (N_LOAD_WORKERS <= 1 || length(isos) < 2) return(lapply(isos, load_dynamic_country))
+
+  cl <- tryCatch(makeCluster(N_LOAD_WORKERS), error = function(e) NULL)
+  if (is.null(cl)) {
+    message("  ! could not start a cluster - loading sequentially")
+    return(lapply(isos, load_dynamic_country))
+  }
+  on.exit(try(stopCluster(cl), silent = TRUE), add = TRUE)
+
+  message("  loading with ", N_LOAD_WORKERS, " workers")
+  wd <- getwd()
+  clusterExport(cl, "wd", envir = environment())
+  clusterEvalQ(cl, { setwd(wd); source("R/dependencies.R"); NULL })
+  clusterExport(cl,
+    c("SCEN_ROOT", "BASELINE", "METRIC", "DOSES", "BAND_TO_SUB", "AGE_BY_INDEX",
+      "load_dynamic_country", "scen_files", "scenario_axes", "check_axes",
+      "season_label", "reduced_file", "sim_files_for", "reduce_scenario"),
+    envir = environment())
+
+  parLapply(cl, isos, load_dynamic_country)
+}
+
+t_load <- Sys.time()
+dyn <- load_all(isos)
+message("  loaded in ", round(as.numeric(Sys.time() - t_load, units = "mins"), 1), " min")
 names(dyn) <- isos
 dyn <- dyn[!vapply(dyn, is.null, logical(1))]
 if (!length(dyn)) stop("No usable scenario output found under ", SCEN_ROOT)
 
 dyn_hosp <- rbindlist(lapply(dyn, `[[`, "hosp"), fill = TRUE)
+dyn_seas <- rbindlist(lapply(dyn, `[[`, "seas"), fill = TRUE)
 dyn_dose <- rbindlist(lapply(dyn, `[[`, "dose"), fill = TRUE)
 dyn_axes <- unique(rbindlist(lapply(dyn, `[[`, "axes"), fill = TRUE))
 dyn_camp <- min(do.call(c, lapply(dyn, `[[`, "camp")), na.rm = TRUE)
@@ -728,12 +869,12 @@ sta <- load_static()
 
 # ---- Impact tables ------------------------------------------------------- ----
 message("\n* Building impact tables")
-imp <- list(impact_table(dyn_hosp, dyn_dose, POP, dyn_axes, DYNAMIC_LABEL))
+imp <- list(impact_table(dyn_seas, dyn_dose, POP, dyn_axes, DYNAMIC_LABEL))
 
 if (!is.null(sta)) {
   sta_axes <- unique(rbindlist(lapply(setdiff(unique(sta$hosp$scen), BASELINE),
                                       scenario_axes), fill = TRUE))
-  imp[[2]] <- impact_table(sta$hosp, sta$dose, POP, sta_axes, STATIC_LABEL)
+  imp[[2]] <- impact_table(sta$seas, sta$dose, POP, sta_axes, STATIC_LABEL)
   bad <- sta_axes[is.na(elig_age) | is.na(uptake)]$scen
   if (length(bad))
     message("  ! Static scenario id(s) not in <letter>.<1-5>-<coverage> form, so they",
