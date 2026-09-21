@@ -36,9 +36,22 @@
 #
 # Splitting model across files (rather than shape, as the old script did) keeps
 # each panel to five points per country. The cost is that the model comparison
-# is no longer side-by-side; figure 8 (the scenario surface) carries it instead,
-# with fill = the difference between the two models. Figure 8 is a tile plot
-# (x = age, y = uptake) and is unaffected by this choice.
+# is no longer side-by-side; figures 8 and 9/10 carry it instead. Figure 8 is a
+# tile plot (x = age, y = uptake) and is unaffected by this choice.
+#
+# Figures 9 and 10 answer a different question and are read differently:
+#
+#   x         eligibility age threshold
+#   y         BOXPLOT over countries - each country contributes one value, the
+#             median of its % averted across trajectories
+#   colour    model (both in the same panel)
+#   facet     uptake
+#   file      season
+#
+# So the spread in 9/10 is BETWEEN-COUNTRY heterogeneity, not sampling
+# uncertainty - the opposite of what the intervals in 1-7 show. 9 uses each
+# scenario's own eligible ages (efficiency); 10 uses the union, i.e. 60+
+# throughout (effectiveness).
 #
 # ---------------------------------------------------------------------------
 # Submission format
@@ -719,6 +732,41 @@ make_layout_c <- function(tab, title, subtitle, fill_lab, diverging = FALSE) {
     g + scale_fill_viridis_c(option = "C", direction = -1, end = 0.92)
 }
 
+# Layout D: the spread ACROSS COUNTRIES, rather than across samples.
+#
+# Each country contributes ONE number - the median of its % averted across the
+# 100 trajectories - and the box summarises those country-level values. So the
+# variation drawn here is BETWEEN-COUNTRY heterogeneity, which is the opposite
+# of layouts B and C: there, each country has its own interval and the spread is
+# sampling uncertainty. Do not read these boxes as uncertainty intervals.
+#
+# This is also the only layout with both models in one panel, so it is where the
+# dynamic-vs-static comparison can be read directly rather than by flipping
+# between files.
+make_layout_d <- function(tab, title, subtitle, ylab) {
+
+  d <- copy(tab)
+  d[, uptake_f := factor(uptake_lab(uptake), levels = uptake_lab(sort(unique(uptake))))]
+  d[, elig_f   := factor(paste0(elig_age, "+"),
+                         levels = paste0(sort(unique(elig_age)), "+"))]
+  d[, model_f  := factor(model, levels = c(DYNAMIC_LABEL, STATIC_LABEL))]
+
+  ggplot(d, aes(x = elig_f, y = value, fill = model_f)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40") +
+    geom_boxplot(position = position_dodge(width = 0.78, preserve = "single"),
+                 width = 0.66, linewidth = 0.35, outlier.size = 0.7) +
+    scale_fill_viridis_d(name = NULL, option = "D", begin = 0.25, end = 0.78) +
+    # One row: only five categories on x, so the panels sit side by side and the
+    # uptake gradient reads left to right.
+    facet_wrap(~uptake_f, nrow = 1) +
+    labs(title = title, subtitle = subtitle,
+         x = "Eligibility age threshold", y = ylab) +
+    theme_bw() +
+    theme(strip.background = element_rect(fill = "grey85"),
+          legend.position = "bottom",
+          panel.grid.major.x = element_blank())
+}
+
 save_fig <- function(g, name, tab, n_facet = 5, wide = FALSE) {
   f <- file.path(OUT_DIR, name)
   ggsave(paste0(f, ".png"), g,
@@ -1010,6 +1058,36 @@ if (length(models) > 1) {
                                   "  |  negative = this model averts more than the static model"),
                            "Difference (pp)", diverging = TRUE),
              nm, w, wide = TRUE)
+  }
+}
+
+# ---- Figures 9 and 10: spread across countries (layout D) ---------------- ----
+# Same two age bases as figures 1 and 2, but collapsed: one median per country,
+# then a box over countries, with both models side by side.
+box_specs <- list(
+  list(basis = "scenario", n = "9_country_spread_scenario_ages",
+       t = "Relative change in seasonal RSV hospitalisations vs baseline (scenario's eligible ages)",
+       y = "Relative change (%)  -  negative = averted"),
+  list(basis = "union", n = "10_country_spread_union_ages",
+       t = "Relative change in seasonal RSV hospitalisations vs baseline (union of eligible ages)",
+       y = "Relative change (%)  -  negative = averted")
+)
+
+for (sp in box_specs) {
+  for (sn in seasons) {
+    d <- imp[basis == sp$basis & season == sn & !is.na(pct)]
+    if (!nrow(d)) next
+    # One value per country: the median across its trajectories.
+    cty <- d[, .(value = median(pct, na.rm = TRUE)),
+             by = .(iso, scen, model, elig_age, uptake)]
+    if (!nrow(cty)) next
+    nm <- paste0("scenario_impact_", sp$n, "_", gsub("/", "-", sn))
+    save_fig(make_layout_d(cty, sp$t,
+               paste0("Season ", sn, "  |  box = spread across ", uniqueN(cty$iso),
+                      " countries, each contributing its median across trajectories",
+                      "  |  NB not an uncertainty interval"),
+               sp$y),
+             nm, cty, n_facet = 1)
   }
 }
 
