@@ -58,6 +58,27 @@ model = function(o, scenario, fit = NULL, uncert = NULL, do_plot = TRUE, verbose
   colnames(p$contact_matrix) = p$age_groups
   p$n_age = length(p$age_groups)
 
+  # ---- Age-bin widths, in months ----
+  # Derived from age_breaks_months, which is the authoritative definition of the
+  # bins. They used to be parsed out of the age-group LABELS, which disagreed
+  # with the breaks for every adult band: bin_width_months("60-64y") returned
+  # 64 - 60 = 48 months, but the breaks say 720..780, i.e. 60 months, because
+  # "60-64y" is an INCLUSIVE label covering ages 60 to 64. The infant "m" labels
+  # and "5-18y" are exclusive, so those came out right and the inconsistency
+  # went unnoticed.
+  #
+  # The consequence was that ageing_event moved P/48 out of each five-year adult
+  # band per month instead of P/60, so adults aged through 60-64 -> 65-69 -> ...
+  # -> 80+ about 25% too fast, piling people into the highest-risk band over the
+  # run. 18-59y was 492 rather than 504 months, ~2.4% too fast.
+  #
+  # The oldest bin is open-ended and must never empty, hence Inf.
+  .w <- diff(unlist(p$age_breaks_months))
+  .w[length(.w)] <- Inf
+  p$bin_widths <- setNames(.w, p$age_groups)
+  if (length(p$bin_widths) != p$n_age)
+    stop("age_breaks_months must have exactly one more entry than age_groups")
+
   # ---- Validate age-group references ----
   # Every yaml/scenario field that names age groups is matched against
   # p$age_groups with %in%, which returns FALSE (not an error) for a label that
@@ -756,7 +777,9 @@ ageing_event <- function(t, y, parms) {
   prefixes   <- parts[, 2]
   age_labels <- parts[, 3]
 
-  widths <- sapply(age_labels, bin_width_months)
+  # Precomputed in model() from age_breaks_months - see the note there on why
+  # these are NOT parsed from the age-group labels.
+  widths <- parms$bin_widths[age_labels]
   new_y  <- y  # copy to modify
 
   # Current event date. Uses the single model-wide convention t = 1 <-> start_date
@@ -978,7 +1001,15 @@ ageing_event <- function(t, y, parms) {
 }
 
 # Helper: compute bin width (months)
+# DEPRECATED - do not use. Age-bin widths come from p$bin_widths, derived from
+# age_breaks_months in model(). Parsing them out of the age-group labels is
+# what made every five-year adult band 25% too narrow; this stub exists so any
+# reintroduction fails loudly instead of silently returning the wrong width.
 bin_width_months <- function(age_label) {
+  stop("bin_width_months() is deprecated: use p$bin_widths (see model()).")
+}
+
+bin_width_months_DEPRECATED <- function(age_label) {
   # age_label is only the suffix like "7-8m", not the full name!
   if (str_detect(age_label, "\\+y$")) return(Inf)
   if (str_detect(age_label, "m$")) {
