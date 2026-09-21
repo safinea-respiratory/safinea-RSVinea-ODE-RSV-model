@@ -25,16 +25,20 @@
 #
 #   x         country
 #   y         the figure's quantity
-#   facet     eligibility age threshold (5 panels)
-#   colour    uptake (sequential - so the 25/50/75 dose-response reads
-#             vertically within each country, and any non-monotonicity is
-#             immediately visible)
+#   facet     uptake (3 panels: 25 / 50 / 75%)
+#   colour    eligibility age threshold (sequential - within each country the
+#             five thresholds should fan out in order, so a crossing stands out)
 #   file      season x model
 #
+# Uptake as the facet also makes the uptake x VE reference band cleaner: each
+# panel has a single uptake and therefore a single band, rather than three
+# translucent ones overlapping.
+#
 # Splitting model across files (rather than shape, as the old script did) keeps
-# each panel to three points per country. The cost is that the model comparison
+# each panel to five points per country. The cost is that the model comparison
 # is no longer side-by-side; figure 8 (the scenario surface) carries it instead,
-# with fill = the difference between the two models.
+# with fill = the difference between the two models. Figure 8 is a tile plot
+# (x = age, y = uptake) and is unaffected by this choice.
 #
 # ---------------------------------------------------------------------------
 # Submission format
@@ -538,18 +542,21 @@ make_layout_b <- function(tab, title, subtitle, ylab, log_y = FALSE, bands = NUL
 
   g <- ggplot(d, aes(x = iso, y = median))
 
-  # Bands first, so point ranges draw over them. One per uptake level, coloured
-  # to match its points.
+  # Bands first, so point ranges draw over them. Uptake is the FACET, so each
+  # panel has exactly one uptake and therefore exactly one band - it needs no
+  # colour of its own, and a neutral grey keeps the colour scale free for the
+  # eligibility threshold. (When uptake was the colour aesthetic this had to be
+  # three overlapping translucent bands per panel.) `uptake_f` is the facet
+  # variable, so ggplot drops each band into its own panel automatically.
   if (!is.null(bands) && nrow(bands)) {
     b <- copy(bands)
     b[, uptake_f := factor(uptake_lab(uptake), levels = levels(d$uptake_f))]
     g <- g +
       geom_rect(data = b, inherit.aes = FALSE,
-                aes(xmin = -Inf, xmax = Inf, ymin = ymin, ymax = ymax, fill = uptake_f),
-                alpha = 0.12) +
-      geom_hline(data = b, aes(yintercept = ymid, colour = uptake_f),
-                 linetype = "dashed", linewidth = 0.4, show.legend = FALSE) +
-      scale_fill_viridis_d(option = "C", end = 0.85, guide = "none")
+                aes(xmin = -Inf, xmax = Inf, ymin = ymin, ymax = ymax),
+                fill = "grey30", alpha = 0.12) +
+      geom_hline(data = b, aes(yintercept = ymid),
+                 linetype = "dashed", linewidth = 0.4, colour = "grey25")
   }
 
   if (!log_y) g <- g + geom_hline(yintercept = 0, linetype = "dashed", colour = "grey40")
@@ -565,14 +572,17 @@ make_layout_b <- function(tab, title, subtitle, ylab, log_y = FALSE, bands = NUL
   }
 
   g <- g +
-    geom_pointrange(aes(ymin = lo, ymax = hi, colour = uptake_f, group = uptake_f),
-                    position = position_dodge(width = 0.7),
+    geom_pointrange(aes(ymin = lo, ymax = hi, colour = elig_f, group = elig_f),
+                    position = position_dodge(width = 0.8),
                     size = POINT_SIZE, fatten = POINT_FATTEN) +
-    scale_colour_viridis_d(name = "Uptake", option = "C", end = 0.85) +
+    scale_colour_viridis_d(name = "Eligibility age", option = "C", end = 0.85) +
+    # Colour = eligibility age, facet = uptake. Both are ordered, so the
+    # sequential palette still reads correctly: within a country the five
+    # thresholds should fan out in order, and a crossing is worth a look.
     # ncol = 1 so panels stack: 28 countries on x makes each panel wide.
-    # Fixed y (not free) - comparing 60+ against 80+ is the point of the
-    # facet, and a per-panel axis would silently rescale that away.
-    facet_wrap(~elig_f, ncol = 1) +
+    # Fixed y (not free) - comparing 25% against 75% is the point of the facet,
+    # and a per-panel axis would silently rescale that away.
+    facet_wrap(~uptake_f, ncol = 1) +
     labs(title = title, subtitle = subtitle, x = NULL, y = ylab) +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1),
@@ -785,7 +795,7 @@ for (sp in specs) {
                                       "\nShaded band = expected reduction (uptake x VE), dashed line = its midpoint"
                                     else ""),
                              sp$y, log_y = isTRUE(sp$log), bands = bnd),
-               nm, tab, n_facet = uniqueN(tab$elig_age))
+               nm, tab, n_facet = uniqueN(tab$uptake))
     }
   }
 }
@@ -818,7 +828,7 @@ for (sp in dose_specs) {
                            paste0(mdl, "  |  median and ", 100 * (QUANT[2] - QUANT[1]),
                                   "% interval across paired samples"),
                            sp$y),
-             nm, tab, n_facet = uniqueN(tab$elig_age))
+             nm, tab, n_facet = uniqueN(tab$uptake))
   }
 }
 
