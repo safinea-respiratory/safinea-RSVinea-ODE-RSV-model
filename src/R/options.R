@@ -206,6 +206,30 @@ set_options = function(do_step = NA, quiet = FALSE, analysis_name = NA,
   # Re-run fitting, overwrite if TRUE, otherwise will use previous fit
   o$overwrite_samples = TRUE
 
+  # NB resuming a calibration is configured in the YAML, not here: see
+  # adaptive_sampling$resume and adaptive_sampling$extra_rounds in
+  # config/default.yaml. It sits with `rounds` and `init_samples` because it
+  # defines the fit rather than how the machine runs it, and that way a country
+  # yaml can continue one country while another restarts.
+
+  # ---- Which parameter sets the scenarios use ----
+  # run_scenarios asks load_calibration() for sets 1..n_best_samples, which come
+  # from fit$best_simulated.
+  #   "final_round" - the last round's particles, sorted by likelihood. These
+  #                   are the sampler's approximation to the posterior, so the
+  #                   spread across trajectories means something.
+  #   "pooled"      - every round ever run, pooled and sorted by likelihood.
+  #                   This was the original behaviour. It yields the n
+  #                   BEST-FITTING sets rather than a sample of the posterior,
+  #                   and because later rounds are descended from earlier ones
+  #                   by resample-and-perturb it can select near-duplicates,
+  #                   narrowing the apparent uncertainty. It also cannot be
+  #                   used across a model change: likelihoods from different
+  #                   models are on different scales, so sorting them together
+  #                   is meaningless.
+  o$calibration_selection = "final_round"
+
+
   # Plot fits only, without re-running fitting
   o$plot_only = FALSE
 

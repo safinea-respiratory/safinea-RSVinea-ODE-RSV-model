@@ -48,8 +48,48 @@ run_calibration = function(o) {
   # specify reference metrics, to limit the model output
   o$fit_metrics <- get_fit_metrics(parse_yaml(o, scenario = "baseline")$parsed)
   
+  # ---- Which rounds to run ----
+  # Each round depends only on the previous round's r<k>_samples file, so a
+  # calibration can continue from whatever is already on disk instead of
+  # restarting at round 0. Configured by adaptive_sampling$resume and
+  # adaptive_sampling$extra_rounds in the YAML (see config/default.yaml).
+  as_opt <- fit$input$adaptive_sampling
+  resume <- if (is.null(as_opt$resume)) "restart" else as_opt$resume
+  resume <- match.arg(resume, c("restart", "continue", "auto"))
+
+  # `rounds` counts the ADAPTIVE rounds that follow the initial r0 draw, so a
+  # fresh start runs rounds + 1 of them. `extra_rounds` has no r0 to exclude and
+  # is a plain count. Two names because one value cannot mean both without
+  # catching somebody out.
+  n_fresh <- as_opt$rounds
+  n_extra <- if (is.null(as_opt$extra_rounds)) as_opt$rounds else as_opt$extra_rounds
+
+  r_last <- if (resume == "restart") -1L else last_complete_round(o, fit)
+
+  # A round is "usable" only if it is complete AND written in the current
+  # parameter space, so ADDING a fitted parameter makes every stored round
+  # unusable and lands here rather than in check_resume_compatible() below.
+  # Say so, otherwise the message points at the directory and not the cause.
+  if (resume == "continue" && r_last < 0)
+    stop("adaptive_sampling$resume = 'continue' but no usable round was found in\n  ",
+         o$pth$fitting, "\n",
+         "  Either nothing has been calibrated yet, or calibration_parameters\n",
+         "  have changed since the stored rounds were written.\n",
+         "  Use 'auto' to fall back to a fresh calibration.")
+
+  if (r_last >= 0) {
+    check_resume_compatible(o, fit, r_last)
+    round_seq <- (r_last + 1L) : (r_last + n_extra)
+    message(" - Continuing from round ", r_last, ": running ", n_extra,
+            " more round(s), r", min(round_seq), "-r", max(round_seq))
+  } else {
+    round_seq <- 0 : n_fresh
+    message(" - Starting a fresh calibration: r0-r", n_fresh,
+            " (", length(round_seq), " rounds)")
+  }
+
   # Iterate through adaptive sampling rounds (including initial 'r0' step)
-  for (r_val in 0 : fit$input$adaptive_sampling$rounds) {
+  for (r_val in round_seq) {
     message(" - Adaptive sampling round ", r_val)
     
     # (Re)sample parameter sets for this sampling round
@@ -85,8 +125,75 @@ run_calibration = function(o) {
   }
   
   # Save final result
-  save_calibration(o, fit)
+  save_calibration(o, fit, r_last = max(round_seq))
   
+}
+
+# ---------------------------------------------------------------- -
+# Find the last adaptive-sampling round that can be resumed from ----
+# ---------------------------------------------------------------- -
+# A round is usable only if its samples file loads, holds the expected number
+# of particles, carries the fitted parameters, and has at least one finite
+# likelihood. A run killed part way through a round leaves that round's file
+# missing or short, and resuming from it would silently start from a partial
+# population - so scan downwards and take the highest round that passes.
+#
+# Returns -1 when there is nothing to resume from.
+last_complete_round = function(o, fit) {
+
+  files <- list.files(o$pth$fitting, pattern = "^r[0-9]+_samples[.]rds$")
+  if (!length(files)) return(-1L)
+  # Strip everything non-numeric rather than using a backreference - the file
+  # names are r<k>_samples.rds, so the digits ARE the round.
+  rounds <- sort(as.integer(gsub("[^0-9]", "", files)), decreasing = TRUE)
+  n_want <- fit$input$adaptive_sampling$init_samples
+
+  for (r in rounds) {
+    d <- try_load(o$pth$fitting, paste0("r", r, "_samples"), throw_error = FALSE)
+    if (is.null(d) || !nrow(d)) next
+    if (!all(c(fit$params, "likelihood") %in% names(d))) next
+    if (nrow(d) != n_want) {
+      message("  ! round ", r, " has ", nrow(d), " particles, expected ", n_want,
+              " - skipping it as incomplete")
+      next
+    }
+    if (!any(is.finite(d$likelihood))) next
+    return(as.integer(r))
+  }
+  -1L
+}
+
+# ---------------------------------------------------------------- -
+# Refuse to resume into a different parameter space ----
+# ---------------------------------------------------------------- -
+# The stored particles are points in the space defined by the fitted parameters
+# and their prior bounds. Edit calibration_parameters in a country yaml and the
+# saved particles no longer mean what the sampler will assume they mean: the
+# perturbation kernel and the bounds check would operate on the wrong space, and
+# the result would look like a normal fit. Fail loudly instead.
+check_resume_compatible = function(o, fit, r_last) {
+
+  d <- try_load(o$pth$fitting, paste0("r", r_last, "_samples"), throw_error = FALSE)
+  stored <- setdiff(names(d), c("param_id", "round", "likelihood"))
+  if (!setequal(stored, fit$params))
+    stop("Cannot continue calibration: the fitted parameters have changed.\n",
+         "  stored (round ", r_last, "): ", paste(sort(stored), collapse = ", "), "\n",
+         "  current yaml          : ", paste(sort(fit$params), collapse = ", "), "\n",
+         "  Start a fresh calibration, or restore the previous ",
+         "calibration_parameters block.")
+
+  # Bounds are not in the samples file, but the previous run's fit object keeps
+  # them. Only checkable when that run completed.
+  prev <- try_load(o$pth$fitting, "fit_result", throw_error = FALSE)
+  if (!is.null(prev) && !is.null(prev$bounds)) {
+    a <- as.data.frame(prev$bounds)[order(prev$params), , drop = FALSE]
+    b <- as.data.frame(fit$bounds)[order(fit$params), , drop = FALSE]
+    if (!isTRUE(all.equal(a, b, check.attributes = FALSE)))
+      stop("Cannot continue calibration: the prior bounds have changed since ",
+           "the stored fit.\n  Start a fresh calibration, or restore the ",
+           "previous bounds.")
+  }
+  invisible(TRUE)
 }
 
 # ---------------------------------------------------------------- -
@@ -145,11 +252,26 @@ setup_calibration = function(o) {
 # -------------------------------------------------------- -
 # Save final file with best parameter sets ----
 # -------------------------------------------------------- -
-save_calibration = function(o, fit) {
+save_calibration = function(o, fit, r_last) {
   
-  # ---- Best simulated parameter set ----
-  # Load all simulated samples
-  all_samples = try_load(o$pth$fitting, "rx_samples")
+  # ---- Parameter sets the scenarios will use ----
+  # run_scenarios pulls sets 1..n_best_samples out of fit$best_simulated, so
+  # what goes in here IS the set of trajectories that get submitted.
+  # See o$calibration_selection in options.R for why this defaults to the final
+  # round rather than the pool of every round.
+  selection = if (is.null(o$calibration_selection)) "final_round" else o$calibration_selection
+  selection = match.arg(selection, c("final_round", "pooled"))
+
+  if (selection == "final_round") {
+    all_samples = try_load(o$pth$fitting, paste0("r", r_last, "_samples"))
+    n_want = o$n_best_samples
+    if (!is.null(n_want) && nrow(all_samples) < n_want)
+      warning("calibration_selection = 'final_round': round ", r_last, " has ",
+              nrow(all_samples), " particles but n_best_samples is ", n_want,
+              ". Raise adaptive_sampling$init_samples or lower n_best_samples.")
+  } else {
+    all_samples = try_load(o$pth$fitting, "rx_samples")
+  }
   
   # Sort parameter set according to the likelihood
   samples_sorted = all_samples %>%
@@ -165,6 +287,14 @@ save_calibration = function(o, fit) {
   # Store best of all as list for consistency 
   fit$best_one = as.list(fit$best_simulated[1,])
   
+  # Record how these sets were chosen, so a later reader does not have to guess
+  # whether a fit predates the final_round default.
+  fit$selection   = selection
+  fit$final_round = r_last
+
+  message("  > ", nrow(fit$best_simulated), " parameter sets selected (",
+          selection, if (selection == "final_round") paste0(", round ", r_last) else "", ")")
+
   # Save this final result
   saveRDS(fit, file = paste0(o$pth$fitting, "fit_result.rds"))
 }

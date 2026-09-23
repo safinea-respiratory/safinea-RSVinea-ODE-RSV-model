@@ -443,8 +443,33 @@ calibration_weights:
 
 # Adaptive sampling options
 adaptive_sampling:
-  rounds: 10        # Number of rounds (set to 0 to turn adaptive sampling off)
+  rounds: 10         # Number of ADAPTIVE rounds on a fresh start. The initial
+                     # Latin-hypercube draw is round r0 and is additional, so
+                     # rounds: 10 runs r0..r10, i.e. 11 rounds in total.
   init_samples: 100  # Number of parameter sets per round
+
+  # ---- Resuming a calibration ----
+  # Every round is a pure function of the previous round's r<k>_samples file, so
+  # a calibration can be picked up where it stopped rather than restarting.
+  #   restart   always begin at r0 and run `rounds` adaptive rounds
+  #   continue  begin after the last usable round on disk and run
+  #             `extra_rounds` more; fails if there is nothing to resume from
+  #   auto      continue when a usable round exists, otherwise restart
+  #
+  # Resuming is refused if the fitted parameters or their prior bounds have
+  # changed since the stored round - the saved particles would then be points in
+  # a different space. See check_resume_compatible() in R/calibration.R.
+  #
+  # NB resuming inherits the sampler's concentration: by the later rounds the
+  # perturbation kernel is derived from a narrow particle spread, so continuing
+  # REFINES an existing fit rather than exploring afresh. If the model has
+  # changed enough to move the optimum outside the current particle cloud, a
+  # fresh calibration is the safer choice.
+  resume: "restart"
+
+  # Rounds to run when resuming. Unlike `rounds` this is a plain count with no
+  # r0 to exclude: from round 10, extra_rounds: 5 runs r11..r15.
+  extra_rounds: 5
 
 # ---- Scenarios ----
 # Every entry listed here is simulated by run_scenarios() (do_step 2), which
