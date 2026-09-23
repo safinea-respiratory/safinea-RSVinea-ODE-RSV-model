@@ -54,6 +54,25 @@
 # throughout (effectiveness).
 #
 # ---------------------------------------------------------------------------
+# Which ages each figure counts
+# ---------------------------------------------------------------------------
+# Every figure measures admissions averted, but over different age bases, and
+# the choice matters as much as the quantity:
+#
+#   scenario   only the ages a scenario vaccinates      1, 6, 9
+#   union      the same ages for all scenarios (60+)    2, 7, 10
+#   all        every age band                           3, 5, 11
+#
+# ABSOLUTE counts use "all", because vaccinating 75+ also reduces infection in
+# people under 75 and that indirect protection is the main thing a transmission
+# model adds over a static one. PERCENTAGES do not: a percentage over all ages
+# is diluted by infants, who dominate RSV burden and are untouched by an adult
+# programme, so it would understate the programme rather than describe it.
+#
+# Figure 5 in particular used to divide averted admissions among the ELIGIBLE
+# ages by the TOTAL population - two different bases in one ratio.
+#
+# ---------------------------------------------------------------------------
 # Submission format
 # ---------------------------------------------------------------------------
 # Based on RespiCompass round-1 2026/2027 (round1_2627_rsv.md) with these
@@ -136,6 +155,12 @@ STATIC_FILE <- file.path(OUT_ROOT, "2026_2027_1_RSV_staticModel.parquet")
 # Set TRUE to write one submission parquet per country instead of holding the
 # whole frame in memory and combining at the end.
 SHARD_SUBMISSION <- FALSE
+
+# How many countries load_static() pulls per scan of the static parquet. Each
+# scan re-decompresses the whole file (~48 s), so fewer, larger chunks are much
+# faster; the limit is memory, at roughly 0.11 GB collected per country. 7 was
+# measured at ~1.8 GB peak. Lower it if the static file grows again.
+STATIC_CHUNK <- 7
 
 # Point / interval styling. In geom_pointrange `size` is the interval LINE
 # width and `fatten` multiplies the point on top of it, so raise POINT_FATTEN
@@ -421,75 +446,125 @@ load_static <- function() {
     message("* Static model file not found (", STATIC_FILE, ") - single-model output")
     return(NULL)
   }
-  read_pq <- if (requireNamespace("nanoparquet", quietly = TRUE)) nanoparquet::read_parquet else
-             if (requireNamespace("arrow", quietly = TRUE))       arrow::read_parquet else NULL
-  if (is.null(read_pq)) {
-    message("* Neither nanoparquet nor arrow installed - cannot read the static parquet")
+  if (!requireNamespace("arrow", quietly = TRUE)) {
+    message("* arrow is not installed; the static file is too large to read with ",
+            "nanoparquet, which cannot filter at read time. Install arrow.")
     return(NULL)
   }
 
-  d <- as.data.table(read_pq(STATIC_FILE))
-  d <- normalise_iso2(d, col = "location")        # static uses EL for Greece
-  d[, target_end_date := as.Date(target_end_date)]
+  # ---- Why this reads in CHUNKS of countries ----
+  # The full 16-scenario static file is ~196 million rows: 28 countries x 16
+  # scenarios x 100 samples x 104 weeks x 42 pop_group levels. Reading it whole
+  # dies with std::bad_alloc, and even filtering to the 12 pop_group levels we
+  # need still collects ~56 million rows, which does not survive collect()
+  # followed by as.data.table() (each of which copies).
+  #
+  # The file is not partitioned or sorted by location, so EVERY query rescans
+  # and re-decompresses all 199 MB. Measured: a scan costs ~48 s whether you ask
+  # for one country or seven, because the scan dominates and the filter is
+  # nearly free.
+  #
+  #     1 country  46.9 s ->  2.0M rows, 0.11 GB      28 scans = ~23 min
+  #     7 countries 47.8 s -> 14.0M rows, 0.78 GB      4 scans = ~3.2 min
+  #
+  # So read a CHUNK of countries per scan: few enough scans to be quick, small
+  # enough collections to stay well inside memory (peak ~1.8 GB at 7). Reading
+  # all 28 at once would be one scan but ~56M rows, which does not survive
+  # collect() followed by as.data.table() - each of those copies.
+  #
+  # We need the per-band _immTotal rows (immYes/immNo partition the same people,
+  # and 'total_immTotal' is the file's own all-age total) plus the 'undefined'
+  # dose rows.
+  # pop_group -> submission band, as a direct lookup. The reduction used to do
+  # grepl("_immTotal$"), grepl("^total_") and sub("_immTotal$", "") over ~14M
+  # strings per chunk, which cost more than reading the file (56 s of a 103 s
+  # chunk). The set of pop_group values is known and finite, so a named vector
+  # replaces all three regexes with one hash lookup.
+  PG_TO_SUB <- setNames(STATIC_TO_SUB, paste0(names(STATIC_TO_SUB), "_immTotal"))
+  want_pg   <- c(names(PG_TO_SUB), "undefined")
+  keep_cols <- c("scenario_id", "target", "target_end_date",
+                 "output_type_id", "value", "pop_group", "location")
 
-  # Only the _immTotal rows are the whole band; immYes/immNo split it and would
-  # double-count if summed alongside. 'total_immTotal' is the file's own total
-  # and must not be folded into the age bands.
-  hosp <- d[target == "rsv_hospitalisations" &
-            grepl("_immTotal$", pop_group) &
-            !grepl("^total_", pop_group)]
-  hosp[, band     := sub("_immTotal$", "", pop_group)]
-  hosp[, sub_band := STATIC_TO_SUB[band]]
-  if (anyNA(hosp$sub_band))
-    warning("static: unmapped age band(s) dropped: ",
-            paste(unique(hosp$band[is.na(hosp$sub_band)]), collapse = ", "))
-  hosp <- hosp[!is.na(sub_band),
-               .(value = sum(value, na.rm = TRUE)),
-               by = .(iso = location, scen = scenario_id, sim = output_type_id,
-                      date = target_end_date, sub_band)]
+  ds   <- arrow::open_dataset(STATIC_FILE)
+  isos <- ds %>% dplyr::distinct(location) %>% dplyr::collect() %>% .$location
+  isos <- sort(unique(as.character(isos)))
 
-  # Seasonal frame, matching what load_dynamic_country() returns so both models
-  # go through impact_table() unchanged. The static file is weekly, so a week is
-  # attributed whole to the season of its end date and `days` is 7 per week -
-  # close enough for the partial-season test, which only asks whether a season
-  # is substantially covered.
-  hosp[, season := season_label(date)]
-  seas <- hosp[, .(value = sum(value), days = 7L * uniqueN(date)),
-               by = .(iso, scen, sim, season, sub_band)]
+  # Chunk size trades scans against peak memory; see the note above.
+  chunks <- split(isos, ceiling(seq_along(isos) / STATIC_CHUNK))
+  message("* Static model: ", length(isos), " countries in ", length(chunks),
+          " chunk(s) from ", basename(STATIC_FILE))
 
-  # Doses: the file reports these BOTH per eligible age band AND as a national
-  # 'undefined' total, and the bands sum exactly to that total - so summing every
-  # administered_doses row double-counts. Take the total when it is present and
-  # fall back to the bands when it is not (older static files carried only the
-  # 'undefined' row, which is how this slipped through on the earlier data).
-  dz <- d[target == "administered_doses"]
-  if (nrow(dz) && "undefined" %in% dz$pop_group) {
-    dz <- dz[pop_group == "undefined"]
-  } else if (nrow(dz)) {
-    message("  (static: no 'undefined' dose total, summing the per-band rows)")
+  hosp_l <- seas_l <- dose_l <- vector("list", length(chunks))
+  camp   <- as.Date(NA)
+  unmapped <- character(0)
+
+  for (i in seq_along(chunks)) {
+
+    d <- ds %>%
+      dplyr::filter(location %in% chunks[[i]],
+                    pop_group %in% want_pg,
+                    target %in% c("rsv_hospitalisations", "administered_doses")) %>%
+      dplyr::select(dplyr::all_of(keep_cols)) %>%
+      dplyr::collect() %>%
+      as.data.table()
+    if (!nrow(d)) next
+
+    d <- normalise_iso2(d, col = "location")      # static uses EL for Greece
+    d[, target_end_date := as.Date(target_end_date)]
+
+    # %chin% is data.table's character-optimised %in%. 'total_immTotal' is the
+    # file's own all-age total and is simply absent from PG_TO_SUB, so it is
+    # excluded here without needing a second test for it.
+    h <- d[target == "rsv_hospitalisations" & pop_group %chin% names(PG_TO_SUB)]
+    if (nrow(h)) {
+      h[, sub_band := PG_TO_SUB[pop_group]]
+      unmapped <- union(unmapped, unique(h$pop_group[is.na(h$sub_band)]))
+      h <- h[!is.na(sub_band),
+             .(value = sum(value, na.rm = TRUE)),
+             by = .(iso = location, scen = scenario_id, sim = output_type_id,
+                    date = target_end_date, sub_band)]
+      h[, season := season_label(date)]
+      # The static file is weekly, so a week is attributed whole to the season
+      # of its end date and `days` is 7 per week - close enough for the
+      # partial-season test, which only asks whether a season is well covered.
+      seas_l[[i]] <- h[, .(value = sum(value), days = 7L * uniqueN(date)),
+                       by = .(iso, scen, sim, season, sub_band)]
+      h[, season := NULL]
+      hosp_l[[i]] <- h
+    }
+
+    # Doses: the file reports these BOTH per eligible age band AND as a national
+    # 'undefined' total, and the bands sum exactly to that total - so summing
+    # every administered_doses row double-counts. Prefer the total; fall back to
+    # the bands for older files that carried only 'undefined'.
+    dz <- d[target == "administered_doses"]
+    if (nrow(dz) && "undefined" %in% dz$pop_group) dz <- dz[pop_group == "undefined"]
+    if (nrow(dz)) {
+      tmp <- dz[, .(doses = sum(value, na.rm = TRUE)),
+                by = .(iso = location, scen = scenario_id, sim = output_type_id)]
+      dose_l[[i]] <- tmp[, sub_band := "undefined"][]
+      # Its own campaign date: a dose row exists for EVERY week, zero outside the
+      # campaign, so take the first week with a non-zero value - not
+      # min(target_end_date), which is just the start of the reporting period.
+      nz <- dz[value > 0]
+      if (nrow(nz)) camp <- min(camp, min(nz$target_end_date, na.rm = TRUE), na.rm = TRUE)
+    }
+
+    rm(d); invisible(gc(FALSE))
   }
-  # NB a constant cannot go in `by` (data.table requires every `by` element to
-  # be the same length as the subset), so sub_band is attached afterwards.
-  dose <- if (nrow(dz)) {
-    tmp <- dz[, .(doses = sum(value, na.rm = TRUE)),
-              by = .(iso = location, scen = scenario_id, sim = output_type_id)]
-    tmp[, sub_band := "undefined"][]
-  } else {
-    data.table(iso = character(), scen = character(), sim = character(),
-               doses = numeric(), sub_band = character())
+
+  hosp <- rbindlist(hosp_l, fill = TRUE)
+  seas <- rbindlist(seas_l, fill = TRUE)
+  dose <- rbindlist(dose_l, fill = TRUE)
+  if (!nrow(hosp)) {
+    message("* Static file yielded no usable rows - check pop_group labels")
+    return(NULL)
   }
+  if (length(unmapped))
+    warning("static: unmapped age band(s) dropped: ", paste(unmapped, collapse = ", "))
 
-  # The static file states its own dose date; keep it rather than imposing ours.
-  # NB it emits an administered_doses row for EVERY week, zero except in the
-  # campaign week, so the campaign date is the first week with a non-zero value -
-  # not min(target_end_date), which is just the start of the reporting period.
-  nz   <- dz[value > 0]
-  camp <- if (nrow(nz)) min(nz$target_end_date, na.rm = TRUE)
-          else if (nrow(dz)) min(dz$target_end_date, na.rm = TRUE)
-          else as.Date(NA)
-
-  message("* Static model: ", uniqueN(hosp$iso), " countries, ",
-          uniqueN(hosp$scen), " scenarios, ", uniqueN(hosp$sim), " trajectories")
+  message("  static: ", uniqueN(hosp$iso), " countries, ", uniqueN(hosp$scen),
+          " scenarios, ", uniqueN(hosp$sim), " trajectories, campaign ", format(camp))
 
   list(hosp = hosp, seas = seas, dose = dose, camp = camp)
 }
@@ -529,6 +604,7 @@ impact_table <- function(hosp, dose, pop_by_iso, axes, model_label) {
 
     scens <- setdiff(unique(h$scen), BASELINE)
     if (!length(scens)) next
+    all_bands <- sort(unique(h$sub_band))   # every age band, for the "all" basis
     ax_i <- axes[scen %in% scens][!is.na(elig_age)]
 
     # Eligible submission bands per scenario, and their union across the
@@ -549,8 +625,40 @@ impact_table <- function(hosp, dose, pop_by_iso, axes, model_label) {
         .(burden = sum(value, na.rm = TRUE)), by = .(sim, season)]
 
     for (s in scens) {
-      for (basis in c("scenario", "union")) {
-        bands <- if (basis == "scenario") elig[[s]] else elig_union
+
+      # Doses for this scenario, per trajectory. Hoisted above the basis loop so
+      # the averted-per-dose figure can pair them with `averted` on the same
+      # (sim) key. Static doses arrive as a single national total (see
+      # load_static); ours are split by band - use whichever is there.
+      d  <- dose[iso == this_iso & scen %in% s]
+      dd <- if (!nrow(d)) NULL
+            else if (all(d$sub_band == "undefined"))
+              d[, .(doses = sum(doses, na.rm = TRUE)), by = sim]
+            else
+              d[sub_band %in% elig[[s]], .(doses = sum(doses, na.rm = TRUE)), by = sim]
+
+      # Three age bases, answering different questions:
+      #   scenario - only the ages this scenario vaccinates. Efficiency within
+      #              the target group.
+      #   union    - the same ages for every scenario (60+ here), so scenarios
+      #              are compared on one population. Effectiveness.
+      #   all      - EVERY age band. The only basis that credits indirect
+      #              protection outside the vaccinated ages, which is the main
+      #              thing a transmission model adds over a static one:
+      #              vaccinating 75+ also reduces infection in people under 75.
+      #              Required for anything per-dose, where the quantity of
+      #              interest is total admissions averted, not the change within
+      #              the target group.
+      #
+      # NB "all" is right for ABSOLUTE averted and wrong for PERCENT averted: a
+      # percentage over all ages is diluted by infants, who dominate RSV burden
+      # and are untouched by an adult programme, so it would understate the
+      # programme rather than describe it.
+      for (basis in c("scenario", "union", "all")) {
+        bands <- switch(basis,
+                        scenario = elig[[s]],
+                        union    = elig_union,
+                        all      = all_bands)
         if (!length(bands)) next
         b_sc <- burden(s, bands); b_bl <- burden(BASELINE, bands)
         if (!nrow(b_sc) || !nrow(b_bl)) next
@@ -559,30 +667,44 @@ impact_table <- function(hosp, dose, pop_by_iso, axes, model_label) {
         pop_elig <- sum(pop[bands], na.rm = TRUE)
         m[, `:=`(pct     = 100 * (burden - burden_bl) / burden_bl,
                  averted = burden_bl - burden)]
+
+        # Averted per 1,000 doses. Doses are a whole-campaign quantity with no
+        # season dimension, so a season's averted is divided by the campaign's
+        # full dose count - the value therefore answers "per 1,000 doses given,
+        # how many admissions did THIS season avoid", and seasons should not be
+        # added together.
+        #
+        # !!! CONSERVATIVE BY CONSTRUCTION !!! `doses` counts uptake x the whole
+        # eligible population, including people in E/I/R who receive a modelled
+        # dose but gain no modelled protection - only susceptibles enter the
+        # waning chain (see ageing_event in R/model.R). The numerator reflects
+        # susceptibles, the denominator everyone, so this UNDERSTATES per-dose
+        # efficiency. The shortfall is the non-susceptible share of the eligible
+        # population, which varies by age band and country and so does not
+        # cancel cleanly between scenarios. It is the price of having
+        # administered_doses reconcile with coverage x population_estimates.csv
+        # for the submission.
+        if (!is.null(dd) && nrow(dd)) m <- merge(m, dd, by = "sim", all.x = TRUE)
+        if (!"doses" %in% names(m)) m[, doses := NA_real_]
+
         out[[length(out) + 1]] <- m[, .(
           iso = this_iso, scen = s, season, basis, sim,
-          pct, averted,
+          pct, averted, doses,
           av_per100k_tot  = 1e5 * averted / pop_total,
-          av_per100k_elig = 1e5 * averted / pop_elig)]
+          av_per100k_elig = 1e5 * averted / pop_elig,
+          averted_per_1k_doses = fifelse(is.finite(doses) & doses > 0,
+                                         1000 * averted / doses, NA_real_))]
       }
 
-      # Doses: no season dimension (a single campaign).
-      d <- dose[iso == this_iso & scen %in% s]
-      if (nrow(d)) {
-        bands <- elig[[s]]
-        # Static doses arrive as a single national total (see load_static);
-        # ours are split by band. Use whatever is there.
-        dd <- if (all(d$sub_band == "undefined"))
-                d[, .(doses = sum(doses, na.rm = TRUE)), by = sim] else
-                d[sub_band %in% bands, .(doses = sum(doses, na.rm = TRUE)), by = sim]
-        if (nrow(dd)) {
-          pop_elig <- sum(pop[bands], na.rm = TRUE)
-          out[[length(out) + 1]] <- data.table(
-            iso = this_iso, scen = s, season = NA_character_, basis = "doses",
-            sim = dd$sim, pct = NA_real_, averted = NA_real_,
-            av_per100k_tot  = 1e5 * dd$doses / pop_total,
-            av_per100k_elig = 1e5 * dd$doses / pop_elig)
-        }
+      # Doses on their own: no season dimension (a single campaign).
+      if (!is.null(dd) && nrow(dd)) {
+        pop_elig <- sum(pop[elig[[s]]], na.rm = TRUE)
+        out[[length(out) + 1]] <- data.table(
+          iso = this_iso, scen = s, season = NA_character_, basis = "doses",
+          sim = dd$sim, pct = NA_real_, averted = NA_real_, doses = dd$doses,
+          av_per100k_tot  = 1e5 * dd$doses / pop_total,
+          av_per100k_elig = 1e5 * dd$doses / pop_elig,
+          averted_per_1k_doses = NA_real_)
       }
     }
   }
@@ -785,11 +907,45 @@ save_fig <- function(g, name, tab, n_facet = 5, wide = FALSE) {
 #          both are aggregated onto the same Monday-start weeks below.
 #   dose : iso, scen, sim, sub_band, doses
 #   camp : campaign date, used as target_end_date for administered_doses
+# Trajectory ids for the submission: 1..N as character.
+#
+# The internal id is "s<param_set>_<fitting_set>" (see create_sim_id in
+# scenarios.R), which leaked straight into output_type_id when this was rebuilt
+# from results_evaluation.R. The round wants plain 1..N, and - importantly -
+# matched trajectories must carry the SAME id across scenarios and countries, so
+# the mapping has to be a pure function of the id string rather than of position
+# within whatever subset is being shaped.
+#
+# The static model already numbers its trajectories 1..N; those are left exactly
+# as they are, because renumbering them would break correspondence with the
+# static model's own output. NB a naive sort would do just that - as strings,
+# "10" sorts before "2".
+normalise_sim_id <- function(sim) {
+
+  s <- as.character(sim)
+  u <- unique(s)
+  if (all(grepl("^[0-9]+$", u))) return(s)          # already 1..N
+
+  m  <- regmatches(s, regexec("^s([0-9]+)_([0-9]+)$", s))
+  ok <- lengths(m) == 3L
+  if (!all(ok))
+    stop("normalise_sim_id(): cannot parse trajectory id(s): ",
+         paste(head(unique(s[!ok]), 3), collapse = ", "))
+
+  pset <- as.integer(vapply(m, `[`, character(1), 2L))   # uncertainty set
+  fset <- as.integer(vapply(m, `[`, character(1), 3L))   # calibration sample
+  # Spans 1..(n_param_sets x n_fitting_sets) without collisions. With the usual
+  # n_parameter_sets = 1 this is just the fitting set, so sample i keeps id i -
+  # which matters because the waning-curve replicate is keyed on it.
+  as.character((pset - 1L) * max(fset) + fset)
+}
+
 to_submission <- function(hosp, dose, camp) {
 
   if (is.null(hosp) || !nrow(hosp)) return(NULL)
 
   h <- copy(hosp)
+  h[, sim := normalise_sim_id(sim)]
   # Week-ending Sunday, matching the round's target_end_date convention.
   h[, target_end_date := floor_date(date, "week", week_start = 1) + 6L]
   wk <- h[, .(value = sum(value, na.rm = TRUE)),
@@ -809,8 +965,9 @@ to_submission <- function(hosp, dose, camp) {
 
   dose_rows <- NULL
   if (!is.null(dose) && nrow(dose)) {
-    dz <- dose[, .(value = sum(doses, na.rm = TRUE)),
-               by = .(location = iso, scenario_id = scen, output_type_id = sim)]
+    dz <- copy(dose)[, sim := normalise_sim_id(sim)]
+    dz <- dz[, .(value = sum(doses, na.rm = TRUE)),
+             by = .(location = iso, scenario_id = scen, output_type_id = sim)]
     dose_rows <- dz[, .(scenario_id, location, target = "administered_doses",
                         pop_group = "undefined",
                         target_end_date = camp, output_type_id, value)]
@@ -828,6 +985,10 @@ check_submission <- function(d, label) {
   if (length(bad_pg))
     warning(label, ": unexpected pop_group(s): ", paste(bad_pg, collapse = ", "))
   n_traj <- uniqueN(d$output_type_id)
+  ids <- suppressWarnings(as.integer(unique(d$output_type_id)))
+  if (anyNA(ids) || !setequal(ids, seq_len(n_traj)))
+    warning(label, ": output_type_id is not 1..", n_traj,
+            " - got e.g. ", paste(head(unique(d$output_type_id), 3), collapse = ", "))
   if (n_traj < 100 || n_traj > 300)
     warning(label, ": ", n_traj, " trajectories (RespiCompass expects 100-300)")
   if (!"administered_doses" %in% d$target)
@@ -928,8 +1089,7 @@ if (!is.null(sta)) {
     message("  ! Static scenario id(s) not in <letter>.<1-5>-<coverage> form, so they",
             " cannot be placed on the (age, uptake) axes and are EXCLUDED from every",
             " figure: ", paste(bad, collapse = ", "),
-            "
-    (they are still reshaped into the submission file)")
+            "\n    (they are still reshaped into the submission file)")
 }
 imp <- rbindlist(imp[!vapply(imp, is.null, logical(1))], fill = TRUE)
 imp <- imp[!is.na(elig_age) & !is.na(uptake)]
@@ -950,15 +1110,27 @@ specs <- list(
        y = "Relative change (%)  -  negative = averted"),
   # Log10: absolute counts span ~2 orders of magnitude across countries, so a
   # linear axis is dominated by the largest and the smallest are unreadable.
-  list(basis = "scenario", col = "averted", n = "3_abs_averted", log = TRUE,
-       t = "Hospitalisations averted vs baseline (scenario's eligible ages)",
-       y = "Hospitalisations averted (count)"),
-  list(basis = "scenario", col = "av_per100k_tot", n = "5_averted_per100k_total",
-       t = "Hospitalisations averted per 100k total population",
-       y = "Averted per 100k total population"),
+  list(basis = "all", col = "averted", n = "3_abs_averted", log = TRUE,
+       t = "Hospitalisations averted vs baseline (ALL ages)",
+       y = "Hospitalisations averted (count)",
+       note = paste("Summed over ALL ages, so indirect protection outside the vaccinated group",
+                    "is included -\nthe main thing a transmission model adds over a static one.")),
+  list(basis = "all", col = "av_per100k_tot", n = "5_averted_per100k_total",
+       t = "Hospitalisations averted per 100k total population (ALL ages)",
+       y = "Averted per 100k total population",
+       note = paste("Numerator and denominator now refer to the same population. This previously",
+                    "divided averted\nadmissions among the ELIGIBLE ages by the TOTAL population,",
+                    "mixing two bases in one ratio.")),
   list(basis = "scenario", col = "av_per100k_elig", n = "6_averted_per100k_eligible",
        t = "Hospitalisations averted per 100k eligible population (scenario's eligible ages)",
        y = "Averted per 100k eligible population"),
+  list(basis = "all", col = "averted_per_1k_doses", n = "11_averted_per_1k_doses",
+       t = "Hospitalisations averted per 1,000 doses administered (ALL ages)",
+       y = "Averted per 1,000 doses",
+       note = paste("Averted is summed over ALL ages, so indirect protection outside the vaccinated",
+                    "group is included.\nDoses count uptake x the whole eligible population, including",
+                    "people who gain no modelled protection, so this still understates per-dose",
+                    "efficiency.\nSeasons share one campaign's doses and must not be summed.")),
   list(basis = "union", col = "av_per100k_elig", n = "7_averted_per100k_union",
        t = "Hospitalisations averted per 100k eligible population (union of eligible ages)",
        y = "Averted per 100k eligible population")
@@ -982,7 +1154,8 @@ for (sp in specs) {
                                     "% interval across paired samples",
                                     if (isTRUE(sp$bands))
                                       "\nShaded band = expected reduction (uptake x VE), dashed line = its midpoint"
-                                    else ""),
+                                    else "",
+                                    if (!is.null(sp$note)) paste0("\n", sp$note) else ""),
                              sp$y, log_y = isTRUE(sp$log), bands = bnd),
                nm, tab, n_facet = uniqueN(tab$uptake))
     }
